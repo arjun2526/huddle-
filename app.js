@@ -15,7 +15,8 @@
     screenStream: null, peers: new Map(), hand: false, mirror: true, layout: 'auto', pinned: null,
     strokes: [], chat: [], ccOn: false, rec: null, joinedAt: 0, micId: '', camId: '', noise: true,
     panel: null, inMeeting: false, needSync: false, speaker: null, speakerAt: 0, boardOpen: false, boardNotified: false,
-    brush: { c: BOARD_COLORS[0], w: 4, e: false }, actx: null, analysers: new Map(), timerInt: null,
+    brush: { c: BOARD_COLORS[0], w: 4, e: false }, session: false, admitted: false, everConnected: false, knock: null,
+    waitingRoom: true, waiting: new Map(), allowed: new Set(), pendingIn: new Map(), actx: null, analysers: new Map(), timerInt: null,
   };
 
   /* ---------- utils ---------- */
@@ -31,6 +32,18 @@
   const fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const dirId = () => `${PREFIX}${S.room}-host`;
   const linkFor = code => `${location.href.split('#')[0].split('?')[0]}#/${code}`;
+  const inviteText = () => `Join my Huddle video call (code ${S.room}): ${linkFor(S.room)}`;
+  async function shareInvite() {
+    const text = inviteText();
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Invite copied. Paste it in any chat or email.', 'check');
+    } catch {
+      $('#invite-text').value = text;
+      $('#modal-invite').hidden = false;
+      requestAnimationFrame(() => { $('#invite-text').focus(); $('#invite-text').select(); });
+    }
+  }
 
   function toast(msg, icon = 'info') {
     const t = document.createElement('div');
@@ -149,6 +162,8 @@
     $('#lobby-code').textContent = code;
     $('#lobby-link').value = linkFor(code);
     $('#lobby-status').textContent = '';
+    if (S.session && !S.inMeeting) endSession();
+    setKnock(null);
     show('lobby');
     if (!navigator.mediaDevices?.getUserMedia) {
       $('#lobby-status').textContent = 'Camera and microphone need a secure (https) page. You can still join to chat and watch.';
@@ -191,7 +206,11 @@
     enterLobby(c);
   };
   $('#lobby-home').onclick = goHome;
-  $('#lobby-copy').onclick = () => copy($('#lobby-link').value);
+  $('#lobby-copy').onclick = shareInvite;
+  $('#ctl-share').onclick = shareInvite;
+  $('#meet-share').onclick = shareInvite;
+  $('#invite-copy').onclick = () => { $('#invite-text').select(); try { document.execCommand('copy'); toast('Invite copied', 'check'); } catch {} };
+  $$('#modal-invite [data-close]').forEach(b => b.onclick = () => $('#modal-invite').hidden = true);
   $('#lobby-link').onclick = e => e.target.select();
   $('#input-name').oninput = updatePreview;
   $('#input-name').onkeydown = e => { if (e.key === 'Enter') $('#btn-join').click(); };
@@ -242,7 +261,7 @@
 
   $('#btn-join').onclick = async () => {
     audioCtx();
-    const btn = $('#btn-join'); btn.disabled = true; btn.textContent = 'Joining…';
+    const btn = $('#btn-join'); btn.disabled = true; btn.textContent = 'Connecting…';
     S.name = ($('#input-name').value || '').trim() || 'Guest';
     try {
       S.me = `${PREFIX}${S.room}-${rand(8)}`;
@@ -253,8 +272,43 @@
       btn.disabled = false; btn.textContent = 'Join now'; return;
     }
     btn.disabled = false; btn.textContent = 'Join now';
-    startMeeting();
+    S.session = true; S.admitted = false; S.everConnected = false;
+    wirePeer(S.peer);
+    setKnock('asking');
+    connectDirectory();
   };
+
+  /* knocking UI in the lobby */
+  function setKnock(state) {
+    S.knock = state;
+    const box = $('#knock'), join = $('#btn-join');
+    join.hidden = !!state && state !== 'denied';
+    box.hidden = !state;
+    if (!state) return;
+    box.dataset.state = state;
+    $('#knock-title').textContent = state === 'denied' ? 'Your request was declined' : state === 'waiting' ? 'Asking to join…' : 'Connecting to the room…';
+    $('#knock-text').textContent = state === 'denied'
+      ? 'Someone in the call declined your request. You can ask again.'
+      : state === 'waiting' ? 'You\'ll join the call when the host lets you in.' : 'Looking for the meeting host.';
+    $('#knock-cancel').hidden = state === 'denied';
+    join.textContent = state === 'denied' ? 'Ask to join again' : 'Join now';
+  }
+  $('#knock-cancel').onclick = () => { endSession(); setKnock(null); $('#lobby-status').textContent = 'Request cancelled.'; };
+
+  function endSession() {
+    S.session = false; S.admitted = false;
+    try { S.dirConn?.close(); } catch {}
+    S.dirConn = null;
+    try { S.dirPeer?.destroy(); } catch {} S.dirPeer = null;
+    try { S.peer?.destroy(); } catch {} S.peer = null;
+  }
+
+  function becomeAdmitted() {
+    if (S.admitted) return;
+    S.admitted = true;
+    setKnock(null);
+    startMeeting();
+  }
 
   function startMeeting() {
     S.inMeeting = true; S.joinedAt = Date.now(); S.needSync = true; S.boardNotified = false;
@@ -262,27 +316,40 @@
     const a = S.micTrack || silentTrack();
     S.localStream = new MediaStream([v, a].filter(Boolean));
     if (S.micTrack) S.micTrack.enabled = S.micOn;
-    wirePeer(S.peer);
     show('meet');
     $('#bar-code').textContent = S.room; $('#meet-code').textContent = S.room; $('#meet-link').value = linkFor(S.room);
-    renderLocal(); syncControls(); renderPeople(); layout();
-    connectDirectory();
+    $('#invite-text').value = inviteText();
+    renderLocal(); syncControls(); renderPeople(); renderHostUI(); layout();
     clearInterval(S.timerInt);
     S.timerInt = setInterval(() => { const s = Math.floor((Date.now() - S.joinedAt) / 1000); $('#meet-timer').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }, 1000);
     startSpeakerLoop();
     addSys(`You joined ${S.room}`);
-    setTimeout(() => { if (S.inMeeting && S.peers.size === 0) toast('You\'re the first one here. Share the link to invite people.', 'link'); }, 2500);
+    setTimeout(() => { if (S.inMeeting && S.peers.size === 0) toast('You\'re the first one here. Use Share to invite people.', 'link'); }, 2500);
+  }
+
+  /* Only accept connections from people the host has admitted */
+  function gate(id, ok, no) {
+    if (!S.admitted) return no();
+    if (S.peers.has(id) || S.allowed.has(id)) return ok();
+    let q = S.pendingIn.get(id);
+    if (!q) { q = { items: [], timer: setTimeout(() => { S.pendingIn.delete(id); q.items.forEach(i => i.no()); }, 10000) }; S.pendingIn.set(id, q); }
+    q.items.push({ ok, no });
+  }
+  function allow(id) {
+    S.allowed.add(id);
+    const q = S.pendingIn.get(id);
+    if (q) { clearTimeout(q.timer); S.pendingIn.delete(id); q.items.forEach(i => i.ok()); }
   }
 
   function wirePeer(peer) {
-    peer.on('connection', conn => setupConn(conn));
-    peer.on('call', call => handleCall(call));
-    peer.on('disconnected', () => { if (S.inMeeting && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch {} }, 1000); });
+    peer.on('connection', conn => gate(conn.peer, () => setupConn(conn), () => { try { conn.close(); } catch {} }));
+    peer.on('call', call => gate(call.peer, () => handleCall(call), () => { try { call.close(); } catch {} }));
+    peer.on('disconnected', () => { if (S.session && !peer.destroyed) setTimeout(() => { try { peer.reconnect(); } catch {} }, 1000); });
     peer.on('error', e => {
       console.warn('peer error', e.type, e.message);
       if (e.type === 'peer-unavailable') {
         const m = String(e.message).match(/peer\s+(\S+)/i); const id = m ? m[1] : '';
-        if (id === dirId()) claimDirectory();
+        if (id === dirId()) dirMissing();
         else if (id) removePeer(id, true);
       } else if (e.type === 'network' || e.type === 'server-error' || e.type === 'socket-error') {
         toast('Connection to signaling server was interrupted. Reconnecting…', 'wifi-off');
@@ -290,52 +357,143 @@
     });
   }
 
+  /* Nobody is hosting the room: admitted members take over right away; a person still
+     waiting only takes over if they never reached a host (an empty room). */
+  function dirMissing() {
+    if (!S.session || S.dirPeer) return;
+    if (S.admitted || !S.everConnected) claimDirectory();
+    else setTimeout(() => { if (S.session && !S.admitted && !S.dirPeer) connectDirectory(); }, 2500 + Math.random() * 1500);
+  }
+
   function connectDirectory() {
-    if (!S.inMeeting || S.dirPeer || !S.peer || S.peer.destroyed) return;
+    if (!S.session || S.dirPeer || !S.peer || S.peer.destroyed) return;
     const c = S.peer.connect(dirId(), { reliable: true });
     S.dirConn = c; let opened = false;
-    c.on('open', () => { opened = true; c.send({ t: 'join', id: S.me }); });
+    c.on('open', () => { opened = true; S.everConnected = true; c.send({ t: 'join', id: S.me, name: S.name, member: S.admitted }); });
     c.on('data', d => {
-      if (d && d.t === 'roster') d.ids.forEach(id => { if (id !== S.me && !S.peers.has(id)) connectTo(id); });
+      if (!d) return;
+      if (d.t === 'wait') setKnock('waiting');
+      else if (d.t === 'denied') { S.denied = true; endSession(); setKnock('denied'); }
+      else if (d.t === 'roster') {
+        becomeAdmitted();
+        d.ids.forEach(id => { if (id !== S.me && !S.peers.has(id)) connectTo(id); });
+      }
     });
     c.on('close', () => {
-      if (S.dirConn === c) { S.dirConn = null; if (S.inMeeting) setTimeout(connectDirectory, 300 + Math.random() * 1500); }
+      if (S.dirConn === c) { S.dirConn = null; if (S.session) setTimeout(connectDirectory, (S.admitted ? 300 : 2500) + Math.random() * 1500); }
     });
-    setTimeout(() => { if (!opened && S.dirConn === c) { S.dirConn = null; try { c.close(); } catch {} claimDirectory(); } }, 7000);
+    setTimeout(() => { if (!opened && S.dirConn === c) { S.dirConn = null; try { c.close(); } catch {} dirMissing(); } }, 7000);
   }
 
   async function claimDirectory() {
-    if (!S.inMeeting || S.dirPeer || S.claiming) return;
+    if (!S.session || S.dirPeer || S.claiming) return;
     S.claiming = true;
     try {
       const dp = await makePeer(dirId());
-      if (!S.inMeeting) { dp.destroy(); return; }
+      if (!S.session) { dp.destroy(); return; }
       S.dirPeer = dp; S.dirConn = null;
       S.roster = new Set([S.me, ...S.peers.keys()]);
       dp.on('connection', c => {
         c.on('data', d => {
-          if (d && d.t === 'join') { c._pid = d.id; c.send({ t: 'roster', ids: [...S.roster].filter(x => x !== d.id) }); S.roster.add(d.id); }
+          if (!d || d.t !== 'join' || typeof d.id !== 'string') return;
+          c._pid = d.id; c._name = String(d.name || 'Guest').slice(0, 32);
+          if (S.peers.has(d.id) || S.roster.has(d.id) || !S.waitingRoom) admitConn(c);
+          else {
+            S.waiting.set(d.id, c); c.send({ t: 'wait' });
+            renderWaiting(); knockAlert(d.id, c._name);
+          }
         });
-        c.on('close', () => { if (c._pid && c._pid !== S.me && !S.peers.has(c._pid)) S.roster.delete(c._pid); });
+        c.on('close', () => {
+          if (S.waiting.get(c._pid) === c) { S.waiting.delete(c._pid); renderWaiting(); }
+          if (c._pid && c._pid !== S.me && !S.peers.has(c._pid)) S.roster.delete(c._pid);
+        });
       });
-      dp.on('disconnected', () => { if (S.inMeeting && !dp.destroyed) setTimeout(() => { try { dp.reconnect(); } catch {} }, 1000); });
+      dp.on('disconnected', () => { if (S.session && !dp.destroyed) setTimeout(() => { try { dp.reconnect(); } catch {} }, 1000); });
       dp.on('error', e => console.warn('dir error', e.type));
+      if (!S.admitted) { becomeAdmitted(); toast('You\'re the host. People who open your link will ask to join.', 'shield-check'); }
+      else { toast('You\'re now the host of this call', 'shield-check'); broadcast(myInfo()); }
+      renderHostUI(); renderPeople();
     } catch (e) {
       if (e.type === 'unavailable-id') setTimeout(connectDirectory, 500 + Math.random() * 800);
       else setTimeout(connectDirectory, 2500);
     } finally { S.claiming = false; }
   }
 
+  /* host actions */
+  function admitConn(c) {
+    const id = c._pid;
+    S.waiting.delete(id);
+    allow(id);
+    broadcast({ t: 'admit', id });
+    try { c.send({ t: 'roster', ids: [...S.roster].filter(x => x !== id) }); } catch {}
+    S.roster.add(id);
+    dismissKnock(id); renderWaiting();
+  }
+  function admit(id) { const c = S.waiting.get(id); if (c) { admitConn(c); toast(`${c._name} was let in`, 'user-check'); } }
+  function deny(id) {
+    const c = S.waiting.get(id); if (!c) return;
+    S.waiting.delete(id);
+    try { c.send({ t: 'denied' }); } catch {}
+    setTimeout(() => { try { c.close(); } catch {} }, 800);
+    dismissKnock(id); renderWaiting();
+  }
+  function admitAll() { [...S.waiting.keys()].forEach(admit); }
+
+  function knockAlert(id, name) {
+    chime(true);
+    dismissKnock(id);
+    const el = document.createElement('div');
+    el.className = 'knock-card'; el.dataset.knock = id;
+    el.innerHTML = `<div class="avatar sm" style="background:${colorFor(name)}">${esc(initial(name))}</div>
+      <div class="kc-text"><b>${esc(name)}</b><span>wants to join this call</span></div>
+      <button class="btn btn-ghost sm" data-deny>Deny</button><button class="btn btn-primary sm" data-admit>Admit</button>`;
+    el.querySelector('[data-admit]').onclick = () => admit(id);
+    el.querySelector('[data-deny]').onclick = () => deny(id);
+    $('#knocks').appendChild(el);
+  }
+  function dismissKnock(id) { $(`[data-knock="${CSS.escape(id)}"]`)?.remove(); }
+
+  function renderWaiting() {
+    const list = [...S.waiting.entries()];
+    $('#waiting-section').hidden = !list.length;
+    $('#waiting-count').textContent = list.length;
+    $('#admit-all').hidden = list.length < 2;
+    $('#waiting').innerHTML = list.map(([id, c]) => `<li>
+      <div class="avatar sm" style="background:${colorFor(c._name)}">${esc(initial(c._name))}</div>
+      <div class="pname">${esc(c._name)}</div>
+      <button class="btn btn-ghost sm" data-w-deny="${esc(id)}">Deny</button>
+      <button class="btn btn-primary sm" data-w-admit="${esc(id)}">Admit</button></li>`).join('');
+    $('#badge-wait').hidden = !list.length;
+    $('#badge-wait').textContent = list.length;
+    // drop alerts for people who stopped waiting
+    $$('[data-knock]').forEach(k => { if (!S.waiting.has(k.dataset.knock)) k.remove(); });
+  }
+  $('#waiting').onclick = e => {
+    const a = e.target.closest('[data-w-admit]'), d = e.target.closest('[data-w-deny]');
+    if (a) admit(a.dataset.wAdmit); else if (d) deny(d.dataset.wDeny);
+  };
+  $('#admit-all').onclick = admitAll;
+  function renderHostUI() {
+    const host = !!S.dirPeer;
+    $('#host-settings').hidden = !host;
+    $('#wr-toggle').checked = S.waitingRoom;
+  }
+  $('#wr-toggle').onchange = e => {
+    S.waitingRoom = e.target.checked;
+    if (!S.waitingRoom) { admitAll(); toast('Waiting room off. People join automatically.', 'door-open'); }
+    else toast('Waiting room on. You\'ll admit people before they join.', 'shield-check');
+  };
+
   function ensurePeer(id) {
     let p = S.peers.get(id);
     if (!p) {
-      p = { id, name: 'Guest', mic: true, cam: false, hand: false, sharing: false, conn: null, call: null, stream: null, screenCall: null, screenStream: null, outScreen: null, announced: false };
+      p = { id, name: 'Guest', mic: true, cam: false, hand: false, sharing: false, host: false, conn: null, call: null, stream: null, screenCall: null, screenStream: null, outScreen: null, announced: false };
       S.peers.set(id, p);
       if (S.dirPeer) S.roster.add(id);
     }
     return p;
   }
-  function myInfo() { return { t: 'info', name: S.name, mic: S.micOn, cam: !!(S.camOn && S.camTrack), hand: S.hand, sharing: !!S.screenStream }; }
+  function myInfo() { return { t: 'info', name: S.name, mic: S.micOn, cam: !!(S.camOn && S.camTrack), hand: S.hand, sharing: !!S.screenStream, host: !!S.dirPeer }; }
   function broadcast(msg) { S.peers.forEach(p => { if (p.conn && p.conn.open) { try { p.conn.send(msg); } catch {} } }); }
 
   function connectTo(id) {
@@ -412,13 +570,14 @@
     switch (d.t) {
       case 'info': {
         const wasHand = p.hand, wasSharing = p.sharing;
-        p.name = String(d.name || 'Guest').slice(0, 32); p.mic = !!d.mic; p.cam = !!d.cam; p.hand = !!d.hand; p.sharing = !!d.sharing;
+        p.name = String(d.name || 'Guest').slice(0, 32); p.mic = !!d.mic; p.cam = !!d.cam; p.hand = !!d.hand; p.sharing = !!d.sharing; p.host = !!d.host;
         if (!p.announced) { p.announced = true; toast(`${p.name} joined`, 'user-plus'); addSys(`${p.name} joined`); chime(true); }
         if (p.hand && !wasHand) toast(`${p.name} raised their hand`, 'hand');
         if (!p.sharing && wasSharing) dropScreen(p);
         renderPeer(p); if (p.screenStream) renderScreen(p); renderPeople(); layout();
         break;
       }
+      case 'admit': if (typeof d.id === 'string') allow(d.id); break;
       case 'chat': addMsg({ from: p.name, text: String(d.text).slice(0, 1000), ts: d.ts || Date.now(), mine: false }); break;
       case 'react': floatReaction(String(d.e).slice(0, 4), p.name); break;
       case 'screen-stop': dropScreen(p); break;
@@ -533,14 +692,17 @@
     if (stage.classList.contains('spot')) { grid.style.gridTemplateColumns = ''; grid.style.gridAutoRows = ''; $$('.tile', grid).forEach(t => t.style.width = ''); return; }
     const n = grid.children.length || 1;
     const W = stage.clientWidth, H = stage.clientHeight, gap = 10;
-    let best = { w: 0, cols: 1 };
-    for (let cols = 1; cols <= n; cols++) {
+    // try several tile shapes so portrait phones get tall tiles and wide screens get 16:9
+    const ratios = W / H < 0.9 ? [16 / 9, 4 / 3, 1, 3 / 4] : W / H < 1.4 ? [16 / 9, 4 / 3] : [16 / 9];
+    let best = { area: 0, w: 0, h: 0, cols: 1 };
+    for (const r of ratios) for (let cols = 1; cols <= n; cols++) {
       const rows = Math.ceil(n / cols);
-      const w = Math.min((W - gap * (cols - 1)) / cols, ((H - gap * (rows - 1)) / rows) * 16 / 9);
-      if (w > best.w * 0.96) best = { w, cols };
+      const w = Math.min((W - gap * (cols - 1)) / cols, ((H - gap * (rows - 1)) / rows) * r);
+      const area = w * (w / r) * (r === 16 / 9 ? 1.08 : 1);
+      if (area > best.area) best = { area, w, h: w / r, cols };
     }
     grid.style.gridTemplateColumns = `repeat(${best.cols}, ${Math.floor(best.w)}px)`;
-    grid.style.gridAutoRows = `${Math.floor(best.w * 9 / 16)}px`;
+    grid.style.gridAutoRows = `${Math.floor(best.h)}px`;
   }
   new ResizeObserver(() => fitGrid()).observe($('#stage'));
 
@@ -585,6 +747,7 @@
     cam.classList.toggle('off', !camOn); setIcon(cam, camOn ? 'video' : 'video-off');
     $('#ctl-screen').classList.toggle('on', !!S.screenStream);
     $('#ctl-hand').classList.toggle('on', S.hand);
+    const hl = $('#hand-label'); if (hl) hl.textContent = S.hand ? 'Lower hand' : 'Raise hand';
     $('#ctl-cc').classList.toggle('on', S.ccOn);
     $('#ctl-board').classList.toggle('on', S.boardOpen);
   }
@@ -672,6 +835,8 @@
     if (a === 'layout') { S.layout = S.layout === 'auto' ? 'spotlight' : S.layout === 'spotlight' ? 'grid' : 'auto'; S.pinned = null; layout(); toast(`Layout: ${S.layout}`, 'layout-grid'); }
     else if (a === 'mirror') { S.mirror = !S.mirror; renderLocal(); }
     else if (a === 'devices') { listDevices(); $('#modal-devices').hidden = false; }
+    else if (a === 'share') shareInvite();
+    else if (a === 'hand') $('#ctl-hand').click();
     else if (a === 'cc') toggleCC();
     else if (a === 'board') toggleBoard();
     else openPanel(a);
@@ -686,7 +851,7 @@
     $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
     $$('.tab-body').forEach(b => b.hidden = b.dataset.body !== tab);
     $$('[data-open]').forEach(b => b.classList.toggle('active', b.dataset.open === tab));
-    if (tab === 'chat') { $('#badge-chat').hidden = true; setTimeout(() => $('#chat-input').focus(), 30); scrollChat(); }
+    if (tab === 'chat') { $('#badge-chat').hidden = true; $('#badge-more').hidden = true; setTimeout(() => $('#chat-input').focus(), 30); scrollChat(); }
     if (tab === 'people') renderPeople();
     requestAnimationFrame(fitGrid);
   }
@@ -698,12 +863,12 @@
   $('#meet-link').onclick = e => e.target.select();
 
   function renderPeople() {
-    const rows = [{ name: `${S.name} (You)`, mic: S.micOn, cam: !!(S.camOn && S.camTrack), hand: S.hand, sharing: !!S.screenStream }];
+    const rows = [{ name: `${S.name} (You)`, mic: S.micOn, cam: !!(S.camOn && S.camTrack), hand: S.hand, sharing: !!S.screenStream, host: !!S.dirPeer }];
     S.peers.forEach(p => rows.push(p));
     rows.sort((a, b) => (b.hand ? 1 : 0) - (a.hand ? 1 : 0));
     $('#people').innerHTML = rows.map(r => `<li>
       <div class="avatar sm" style="background:${colorFor(r.name)}">${esc(initial(r.name))}</div>
-      <div class="pname">${esc(r.name)}${r.sharing ? ' <small>· presenting</small>' : ''}</div>
+      <div class="pname">${esc(r.name)}${r.host ? ' <small class="host-tag">Host</small>' : ''}${r.sharing ? ' <small>· presenting</small>' : ''}</div>
       <div class="icons">${r.hand ? `<span class="hand-on" title="Hand raised">${ico('hand')}</span>` : ''}
       <span class="${r.cam ? '' : 'off'}" title="${r.cam ? 'Camera on' : 'Camera off'}">${ico(r.cam ? 'video' : 'video-off')}</span>
       <span class="${r.mic ? '' : 'off'}" title="${r.mic ? 'Mic on' : 'Muted'}">${ico(r.mic ? 'mic' : 'mic-off')}</span></div></li>`).join('');
@@ -721,7 +886,7 @@
     const el = document.createElement('div'); el.className = 'msg';
     el.innerHTML = `<div class="meta"><b>${esc(m.mine ? 'You' : m.from)}</b><span>${fmtTime(new Date(m.ts))}</span></div><div class="text">${linkify(m.text)}</div>`;
     $('#chat-list').appendChild(el); scrollChat();
-    if (!m.mine && !m.history && S.panel !== 'chat') { $('#badge-chat').hidden = false; toast(`${m.from}: ${m.text.slice(0, 80)}`, 'message-square'); }
+    if (!m.mine && !m.history && S.panel !== 'chat') { $('#badge-chat').hidden = false; $('#badge-more').hidden = false; toast(`${m.from}: ${m.text.slice(0, 80)}`, 'message-square'); }
   }
   function addSys(text) {
     const el = document.createElement('div'); el.className = 'msg sys'; el.textContent = text;
@@ -807,8 +972,9 @@
     stopRecognition(); stopScreen();
     S.peers.forEach(p => [p.conn, p.call, p.screenCall, p.outScreen].forEach(c => { try { c && c.close(); } catch {} }));
     S.peers.clear(); S.roster.clear(); S.analysers.clear();
-    try { S.dirPeer?.destroy(); } catch {} S.dirPeer = null; S.dirConn = null;
-    try { S.peer?.destroy(); } catch {} S.peer = null;
+    endSession();
+    S.waiting.clear(); S.allowed.clear(); S.pendingIn.forEach(q => clearTimeout(q.timer)); S.pendingIn.clear();
+    $('#knocks').innerHTML = ''; renderWaiting();
     clearInterval(S.timerInt); clearInterval(speakerInt);
     $$('#stage .tile').forEach(t => t.remove());
     $('#chat-list').querySelectorAll('.msg').forEach(m => m.remove()); $('#chat-empty').hidden = false;
@@ -825,7 +991,8 @@
   $('#btn-rejoin').onclick = () => enterLobby(S.room);
   $('#btn-home').onclick = goHome;
   function goHome() {
-    if (S.inMeeting) teardown();
+    if (S.inMeeting) teardown(); else if (S.session) endSession();
+    setKnock(null);
     S.camTrack?.stop(); S.camTrack = null; S.micTrack?.stop(); S.micTrack = null; S.camOn = true; S.micOn = true;
     try { history.replaceState(null, '', location.pathname + location.search); } catch { try { location.hash = ''; } catch {} }
     document.title = 'Huddle — Video meetings with a link';
@@ -841,7 +1008,7 @@
     else if (mod && !e.altKey && k === 'e') { e.preventDefault(); toggleCam(); }
     else if (mod && e.altKey && k === 'h') { e.preventDefault(); toggleHand(); }
     else if (mod && e.altKey && k === 'c') { e.preventDefault(); openPanel('chat'); }
-    else if (k === 'escape') { $('#modal-devices').hidden = true; rp.hidden = true; $('#more-pop').hidden = true; }
+    else if (k === 'escape') { $('#modal-devices').hidden = true; $('#modal-invite').hidden = true; rp.hidden = true; $('#more-pop').hidden = true; }
   });
 
   /* ---------- boot ---------- */
