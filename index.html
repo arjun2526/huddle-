@@ -1,0 +1,660 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Huddle — Video meetings with a link</title>
+<meta name="description" content="Start a video meeting, share the link, and talk face to face. Camera, mic, chat, screen share, whiteboard, reactions and live captions." />
+<link rel="preconnect" href="https://api.fontshare.com" />
+<link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=cabinet-grotesk@500,700,800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="./style.css" />
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+
+<!-- HOME -->
+<section id="view-home" class="view active" aria-label="Home">
+  <header class="home-top">
+    <div class="wordmark">huddle<span>.</span></div>
+    <div class="clock" id="home-clock"></div>
+  </header>
+  <main class="home-main">
+    <div class="home-copy">
+      <p class="eyebrow"><span class="dot"></span> Peer-to-peer · no sign-up · free</p>
+      <h1>Meet anyone.<br/>Just send a link.</h1>
+      <p class="lede">Start a room in one click and share the link. Camera, mic, chat, screen sharing, a shared whiteboard, reactions and live captions all work in the browser.</p>
+      <div class="home-actions">
+        <button class="btn btn-primary btn-lg" id="btn-new"><i data-lucide="video"></i> New meeting</button>
+        <form class="code-form" id="form-join">
+          <i data-lucide="keyboard"></i>
+          <input id="input-code" placeholder="Enter a code or link" autocomplete="off" aria-label="Meeting code or link" />
+          <button class="btn btn-ghost" type="submit">Join</button>
+        </form>
+      </div>
+      <ul class="feature-list">
+        <li><i data-lucide="link"></i> Shareable room links</li>
+        <li><i data-lucide="monitor-up"></i> Screen sharing</li>
+        <li><i data-lucide="message-square"></i> In-call chat</li>
+        <li><i data-lucide="pen-tool"></i> Live whiteboard</li>
+        <li><i data-lucide="captions"></i> Live captions</li>
+        <li><i data-lucide="hand"></i> Raise hand + reactions</li>
+      </ul>
+    </div>
+    <div class="home-art" aria-hidden="true">
+      <div class="art-grid">
+        <div class="art-tile t1"><div class="art-av">A</div><span>Aarav</span></div>
+        <div class="art-tile t2 speaking"><div class="art-av">M</div><span>Meera</span><div class="art-wave"><i></i><i></i><i></i><i></i></div></div>
+        <div class="art-tile t3"><div class="art-av">J</div><span>Jordan</span><b class="art-hand">✋</b></div>
+        <div class="art-tile t4"><div class="art-av">S</div><span>Sana</span></div>
+      </div>
+      <div class="art-bar"><i></i><i></i><i class="red"></i><i></i><i></i></div>
+      <div class="art-bubble">Sharing the link now →</div>
+    </div>
+  </main>
+</section>
+
+<!-- LOBBY -->
+<section id="view-lobby" class="view" aria-label="Ready to join">
+  <header class="home-top">
+    <button class="wordmark as-btn" id="lobby-home">huddle<span>.</span></button>
+  </header>
+  <main class="lobby-main">
+    <div class="preview-wrap">
+      <div class="preview" id="preview">
+        <video id="preview-video" autoplay playsinline muted></video>
+        <div class="preview-off" id="preview-off"><div class="avatar xl" id="preview-avatar">?</div><p id="preview-msg">Camera is off</p></div>
+        <div class="preview-meter" id="preview-meter"><i></i><i></i><i></i></div>
+        <div class="preview-controls">
+          <button class="round" id="lobby-mic" aria-label="Toggle microphone"><i data-lucide="mic"></i></button>
+          <button class="round" id="lobby-cam" aria-label="Toggle camera"><i data-lucide="video"></i></button>
+        </div>
+      </div>
+      <div class="device-row">
+        <label><i data-lucide="mic"></i><select id="sel-mic" aria-label="Microphone"></select></label>
+        <label><i data-lucide="video"></i><select id="sel-cam" aria-label="Camera"></select></label>
+      </div>
+    </div>
+    <div class="lobby-side">
+      <h2>Ready to join?</h2>
+      <p class="muted">Room <span class="mono" id="lobby-code"></span></p>
+      <label class="field">
+        <span>Your name</span>
+        <input id="input-name" maxlength="32" placeholder="What should people call you?" autocomplete="name" />
+      </label>
+      <button class="btn btn-primary btn-lg wide" id="btn-join">Join now</button>
+      <div class="share-box">
+        <span>Invite others with this link</span>
+        <div class="share-row"><input id="lobby-link" readonly aria-label="Meeting link" /><button class="btn btn-ghost sm" id="lobby-copy"><i data-lucide="copy"></i> Copy</button></div>
+      </div>
+      <p class="tiny muted" id="lobby-status"></p>
+    </div>
+  </main>
+</section>
+
+<!-- MEETING -->
+<section id="view-meet" class="view" aria-label="Meeting">
+  <div class="meet-body">
+    <div class="stage" id="stage">
+      <div class="spotlight" id="spotlight"></div>
+      <div class="grid" id="grid"></div>
+      <div class="board" id="board" hidden>
+        <div class="board-tools">
+          <div class="swatches" id="swatches"></div>
+          <input type="range" id="board-size" min="2" max="24" value="4" aria-label="Brush size" />
+          <button class="tool" id="board-eraser" aria-label="Eraser" title="Eraser"><i data-lucide="eraser"></i></button>
+          <button class="tool" id="board-clear" aria-label="Clear board" title="Clear for everyone"><i data-lucide="trash-2"></i></button>
+          <button class="tool" id="board-close" aria-label="Close board" title="Close"><i data-lucide="x"></i></button>
+        </div>
+        <canvas id="board-canvas" width="1600" height="900"></canvas>
+      </div>
+      <div class="captions" id="captions" aria-live="polite"></div>
+      <div class="reactions-layer" id="reactions-layer"></div>
+    </div>
+
+    <aside class="panel" id="panel" hidden>
+      <div class="panel-head">
+        <div class="tabs" role="tablist">
+          <button role="tab" data-tab="chat" class="tab active">Chat</button>
+          <button role="tab" data-tab="people" class="tab">People <span id="people-count" class="pill">1</span></button>
+          <button role="tab" data-tab="info" class="tab">Info</button>
+        </div>
+        <button class="icon-btn" id="panel-close" aria-label="Close panel"><i data-lucide="x"></i></button>
+      </div>
+      <div class="tab-body" data-body="chat">
+        <div class="chat-list" id="chat-list">
+          <div class="chat-empty" id="chat-empty"><i data-lucide="message-square-dashed"></i><p>No messages yet.<br/>Messages go to everyone in the call.</p></div>
+        </div>
+        <form class="chat-form" id="chat-form">
+          <input id="chat-input" placeholder="Send a message to everyone" autocomplete="off" maxlength="1000" aria-label="Chat message" />
+          <button class="icon-btn accent" aria-label="Send"><i data-lucide="send-horizontal"></i></button>
+        </form>
+      </div>
+      <div class="tab-body" data-body="people" hidden>
+        <ul class="people" id="people"></ul>
+      </div>
+      <div class="tab-body" data-body="info" hidden>
+        <div class="info">
+          <h3>Joining info</h3>
+          <p class="muted tiny">Anyone with this link can join. Share it by chat, email or text.</p>
+          <div class="share-row"><input id="meet-link" readonly aria-label="Meeting link" /><button class="btn btn-ghost sm" id="meet-copy"><i data-lucide="copy"></i></button></div>
+          <p class="muted tiny">Meeting code</p>
+          <p class="mono big" id="meet-code"></p>
+          <h3>Shortcuts</h3>
+          <dl class="keys">
+            <dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Mute / unmute</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>E</kbd></dt><dd>Camera on / off</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>H</kbd></dt><dd>Raise hand</dd>
+            <dt><kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>C</kbd></dt><dd>Open chat</dd>
+          </dl>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="bar">
+    <div class="bar-left">
+      <span id="meet-clock"></span><span class="sep">|</span><span class="mono" id="bar-code"></span>
+      <span class="timer" id="meet-timer">00:00</span>
+    </div>
+    <div class="bar-center">
+      <button class="ctl" id="ctl-mic" title="Microphone (Ctrl+D)" aria-label="Toggle microphone"><i data-lucide="mic"></i></button>
+      <button class="ctl" id="ctl-cam" title="Camera (Ctrl+E)" aria-label="Toggle camera"><i data-lucide="video"></i></button>
+      <button class="ctl" id="ctl-screen" title="Share screen" aria-label="Share screen"><i data-lucide="monitor-up"></i></button>
+      <div class="pop-wrap">
+        <button class="ctl" id="ctl-react" title="Send a reaction" aria-label="Reactions"><i data-lucide="smile-plus"></i></button>
+        <div class="popover" id="react-pop" hidden></div>
+      </div>
+      <button class="ctl" id="ctl-hand" title="Raise hand (Ctrl+Alt+H)" aria-label="Raise hand"><i data-lucide="hand"></i></button>
+      <button class="ctl hide-sm" id="ctl-cc" title="Live captions" aria-label="Captions"><i data-lucide="captions"></i></button>
+      <button class="ctl hide-sm" id="ctl-board" title="Whiteboard" aria-label="Whiteboard"><i data-lucide="pen-tool"></i></button>
+      <div class="pop-wrap">
+        <button class="ctl" id="ctl-more" title="More options" aria-label="More options"><i data-lucide="ellipsis-vertical"></i></button>
+        <div class="popover menu" id="more-pop" hidden>
+          <button data-act="chat" class="show-sm"><i data-lucide="message-square"></i> Chat</button>
+          <button data-act="people" class="show-sm"><i data-lucide="users"></i> People</button>
+          <button data-act="info" class="show-sm"><i data-lucide="info"></i> Meeting details</button>
+          <button data-act="cc" class="show-sm"><i data-lucide="captions"></i> Live captions</button>
+          <button data-act="board" class="show-sm"><i data-lucide="pen-tool"></i> Whiteboard</button>
+          <button data-act="layout"><i data-lucide="layout-grid"></i> <span id="layout-label">Switch to spotlight</span></button>
+          <button data-act="mirror"><i data-lucide="flip-horizontal"></i> Mirror my video</button>
+          <button data-act="devices"><i data-lucide="settings"></i> Audio &amp; video settings</button>
+        </div>
+      </div>
+      <button class="ctl leave" id="ctl-leave" title="Leave call" aria-label="Leave call"><i data-lucide="phone-off"></i></button>
+    </div>
+    <div class="bar-right">
+      <button class="ctl flat" data-open="info" title="Meeting details" aria-label="Meeting details"><i data-lucide="info"></i></button>
+      <button class="ctl flat" data-open="people" title="People" aria-label="People"><i data-lucide="users"></i><span class="badge" id="badge-people">1</span></button>
+      <button class="ctl flat" data-open="chat" title="Chat" aria-label="Chat"><i data-lucide="message-square"></i><span class="badge dot-badge" id="badge-chat" hidden></span></button>
+    </div>
+  </footer>
+</section>
+
+<!-- LEFT -->
+<section id="view-left" class="view" aria-label="You left the meeting">
+  <main class="left-main">
+    <h2>You left the meeting</h2>
+    <p class="muted" id="left-duration"></p>
+    <div class="left-actions">
+      <button class="btn btn-ghost" id="btn-rejoin">Rejoin</button>
+      <button class="btn btn-primary" id="btn-home">Return to home</button>
+    </div>
+  </main>
+</section>
+
+<!-- Devices modal -->
+<div class="modal" id="modal-devices" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dev-title">
+    <div class="modal-head"><h3 id="dev-title">Audio &amp; video</h3><button class="icon-btn" data-close aria-label="Close"><i data-lucide="x"></i></button></div>
+    <label class="field"><span>Microphone</span><select id="m-sel-mic"></select></label>
+    <label class="field"><span>Camera</span><select id="m-sel-cam"></select></label>
+    <label class="check"><input type="checkbox" id="m-noise" checked /> Noise suppression &amp; echo cancellation</label>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script src="./app.js"></script>
+<script data-pplx-inline-edit>
+(function () {
+  if (window === window.top) return;
+
+  const allowedParentOrigins = ["https://www.perplexity.ai","https://perplexity.ai","https://testing.perplexity.ai","https://staging.perplexity.ai","https://*.preview.i.perplexity.ai","http://perplexity.localhost","http://localhost:1420","http://127.0.0.1:1420","http://localhost:3000","http://127.0.0.1:3000","http://localhost:5173","http://127.0.0.1:5173"];
+  const MAX_FONT_BYTES = 500 * 1024;
+  const MAX_TOTAL_FONT_BYTES = 2 * 1024 * 1024;
+  const DEFAULT_LINE_HEIGHT = 16;
+  let scrollForwarding = false;
+  let scrollRaf = 0;
+  let trustedTopOrigin = null;
+
+  // Allow entries like "https://*.preview.i.perplexity.ai" — the wildcard
+  // matches a single DNS label (no dots), so "https://*.foo" cannot stretch
+  // across multiple labels.
+  function matchesAllowedOrigin(origin) {
+    if (!origin) return false;
+    for (const entry of allowedParentOrigins) {
+      if (!entry.includes("*")) {
+        if (entry === origin) return true;
+        continue;
+      }
+      const pattern = new RegExp(
+        "^" +
+          entry.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^.]+") +
+          "$",
+      );
+      if (pattern.test(origin)) return true;
+    }
+    return false;
+  }
+
+  // Trust decision: when the sender is same-origin-visible (event.origin is a
+  // real origin like https://www.perplexity.ai) we trust event.origin directly.
+  // When event.origin is "null" (opaque broker srcdoc), we fall back to the
+  // broker's stamped `parentOrigin` to identify the top window. The fallback
+  // is claim-only — we rely on the browser's native `targetOrigin` enforcement
+  // on the response path (see postToTrustedTop) to ensure replies can't be
+  // delivered to anyone but the actual top window of that claimed origin.
+  function getTrustedParentOrigin(event) {
+    const forwardedParentOrigin =
+      typeof event.data.parentOrigin === "string" ? event.data.parentOrigin : null;
+    const parentOrigin = event.origin === "null" ? forwardedParentOrigin : event.origin;
+    return matchesAllowedOrigin(parentOrigin) ? parentOrigin : null;
+  }
+
+  // All responses go to window.top with targetOrigin = the allowlisted origin.
+  // An attacker that iframes us inside their own null-origin broker can claim
+  // any parentOrigin they like, but the browser will drop the reply whenever
+  // the real top's origin doesn't match — so the screenshot never leaves.
+  function postToTrustedTop(message) {
+    if (!trustedTopOrigin) return;
+    try {
+      window.top.postMessage(message, trustedTopOrigin);
+    } catch (_error) {}
+  }
+
+  const PICK_CAPABILITIES = ["pick"];
+  const PICK_CHAIN_LENGTH = 4;
+  const PICK_MAX_TEXT_CHARS = 120;
+  const PICK_MAX_HTML_CHARS = 300;
+
+  function truncate(value, maxChars) {
+    return value.length > maxChars ? value.slice(0, maxChars - 1) + "…" : value;
+  }
+
+  function isPickableElement(element) {
+    return (
+      element instanceof Element &&
+      element !== document.documentElement &&
+      element !== document.body
+    );
+  }
+
+  function resolvePickTarget(x, y) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const element = document.elementFromPoint(x, y);
+    return isPickableElement(element) ? element.closest("svg") || element : null;
+  }
+
+  function pickLabel(element) {
+    if (element.id) return element.localName + "#" + element.id;
+    return [element.localName].concat(Array.from(element.classList).slice(0, 2)).join(".");
+  }
+
+  // Only attributes that help find the element in source. data-* values and URL
+  // query strings or fragments can carry tokens.
+  const PICK_ATTRIBUTES = new Set([
+    "id",
+    "class",
+    "name",
+    "type",
+    "role",
+    "alt",
+    "aria-label",
+    "href",
+    "src",
+  ]);
+
+  function pickAttributeValue(attribute) {
+    return attribute.name === "href" || attribute.name === "src"
+      ? attribute.value.split(/[?#]/)[0]
+      : attribute.value;
+  }
+
+  function describePickElement(element) {
+    const chain = [];
+    for (
+      let current = element;
+      isPickableElement(current) && chain.length < PICK_CHAIN_LENGTH;
+      current = current.parentElement
+    ) {
+      chain.unshift(current);
+    }
+    const attributes = Array.from(element.attributes)
+      .filter((attribute) => PICK_ATTRIBUTES.has(attribute.name))
+      .map((attribute) => ` ${attribute.name}="${pickAttributeValue(attribute).replace(/"/g, "&quot;")}"`)
+      .join("");
+    const text = (element.innerText || element.textContent || "").replace(/\s+/g, " ").trim();
+    return {
+      chain: chain.map(pickLabel),
+      html: truncate(`<${element.localName}${attributes}>`, PICK_MAX_HTML_CHARS),
+      text: text ? truncate(text, PICK_MAX_TEXT_CHARS) : undefined,
+    };
+  }
+
+  // Hover asks once per frame, and innerText on a large section forces layout,
+  // so only the rect is re-read while the pointer stays on the same element.
+  // Clicks ask for fresh details since the page may have changed the element.
+  let lastPick = null;
+
+  function describePickTarget(element, fresh) {
+    if (fresh || lastPick?.element !== element) {
+      lastPick = { element, details: describePickElement(element) };
+    }
+    const rect = element.getBoundingClientRect();
+    return {
+      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      ...lastPick.details,
+    };
+  }
+
+  function inlineAll(original, clone) {
+    if (original.nodeType !== 1 || clone.nodeType !== 1) return;
+
+    try {
+      const computedStyle = getComputedStyle(original);
+      // cssText on a computed style is the serialized declaration in modern
+      // Chromium/Safari — a single read beats enumerating ~400 longhand
+      // properties. Firefox returns "" here, so we fall back on empty.
+      const serialized = computedStyle.cssText;
+      if (serialized) {
+        clone.style.cssText = serialized;
+      } else {
+        const parts = new Array(computedStyle.length);
+        for (let index = 0; index < computedStyle.length; index += 1) {
+          const property = computedStyle[index];
+          parts[index] = `${property}:${computedStyle.getPropertyValue(property)};`;
+        }
+        clone.style.cssText = parts.join("");
+      }
+    } catch (_error) {}
+
+    const originalChildren = original.children;
+    const clonedChildren = clone.children;
+    for (
+      let index = 0;
+      index < originalChildren.length && index < clonedChildren.length;
+      index += 1
+    ) {
+      inlineAll(originalChildren[index], clonedChildren[index]);
+    }
+  }
+
+  function extractFontUrl(srcValue) {
+    const matches = [
+      ...srcValue.matchAll(
+        /url\(["']?([^"')]+)["']?\)(?:\s*format\(["']?([^"')]+)["']?\))?/gi,
+      ),
+    ];
+    if (matches.length === 0) return null;
+    const woff2 = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff2"));
+    if (woff2) return woff2[1];
+    const woff = matches.find((m) => m[2] && m[2].toLowerCase().includes("woff"));
+    if (woff) return woff[1];
+    return matches[0][1];
+  }
+
+  // Cache resolved font URL -> data URI across captures. Fonts on a page
+  // essentially never change, and a batch run emits multiple captures back to
+  // back — without this we'd refetch + re-base64 every time.
+  const fontDataUriCache = new Map();
+  const SRC_DECLARATION_RE = /src\s*:\s*[^;}]+/i;
+
+  async function fetchAsDataUri(url) {
+    if (fontDataUriCache.has(url)) return fontDataUriCache.get(url);
+    let dataUri = null;
+    try {
+      const response = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (response.ok) {
+        const blob = await response.blob();
+        if (blob.size <= MAX_FONT_BYTES) {
+          dataUri = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () =>
+              resolve(typeof reader.result === "string" ? reader.result : null);
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(blob);
+          });
+        }
+      }
+    } catch (_error) {
+      dataUri = null;
+    }
+    fontDataUriCache.set(url, dataUri);
+    return dataUri;
+  }
+
+  function collectFontFaceRuleTexts() {
+    const rules = [];
+    for (const sheet of document.styleSheets) {
+      let cssRules;
+      try {
+        cssRules = sheet.cssRules;
+      } catch (_error) {
+        continue;
+      }
+      if (!cssRules) continue;
+      for (const rule of cssRules) {
+        const cssText = rule.cssText || "";
+        if (cssText.startsWith("@font-face")) rules.push(cssText);
+      }
+    }
+    return rules;
+  }
+
+  async function buildInlinedFontCss() {
+    const ruleTexts = collectFontFaceRuleTexts();
+    if (ruleTexts.length === 0) return null;
+
+    const resolved = ruleTexts.map((cssText) => {
+      if (!SRC_DECLARATION_RE.test(cssText)) return null;
+      const srcMatch = cssText.match(/src\s*:\s*([^;}]+)[;}]/i);
+      if (!srcMatch) return null;
+      const url = extractFontUrl(srcMatch[1]);
+      if (!url) return null;
+      try {
+        return { cssText, url: new URL(url, document.baseURI).href };
+      } catch (_error) {
+        return null;
+      }
+    });
+
+    const dataUris = await Promise.all(
+      resolved.map((entry) => (entry ? fetchAsDataUri(entry.url) : Promise.resolve(null))),
+    );
+
+    const inlined = [];
+    let totalBytes = 0;
+    for (let index = 0; index < resolved.length; index += 1) {
+      const entry = resolved[index];
+      const dataUri = dataUris[index];
+      if (!entry || !dataUri) continue;
+      const approxBytes = dataUri.length * 0.75;
+      if (totalBytes + approxBytes > MAX_TOTAL_FONT_BYTES) break;
+      totalBytes += approxBytes;
+      inlined.push(entry.cssText.replace(SRC_DECLARATION_RE, `src: url("${dataUri}")`));
+    }
+    return inlined.length > 0 ? inlined.join("\n") : null;
+  }
+
+  function stripExternal(clone) {
+    const images = clone.querySelectorAll("img");
+    for (let index = 0; index < images.length; index += 1) {
+      const src = images[index].getAttribute("src");
+      if (src && !src.startsWith("data:")) images[index].removeAttribute("src");
+    }
+
+    const elements = clone.querySelectorAll("*");
+    for (let index = 0; index < elements.length; index += 1) {
+      const style = elements[index].style.cssText;
+      if (style && style.includes("url(")) {
+        elements[index].style.cssText = style.replace(
+          /url\(["']?(?!data:)[^)"']*["']?\)/gi,
+          "none",
+        );
+      }
+    }
+  }
+
+  function emitScroll() {
+    scrollRaf = 0;
+    if (!scrollForwarding) return;
+    postToTrustedTop({
+      type: "INLINE_EDIT_SCROLL",
+      scrollX: window.scrollX,
+      scrollY: window.scrollY,
+      capabilities: PICK_CAPABILITIES,
+    });
+  }
+
+  window.addEventListener(
+    "scroll",
+    function () {
+      if (!scrollForwarding || scrollRaf) return;
+      scrollRaf = requestAnimationFrame(emitScroll);
+    },
+    { passive: true, capture: true },
+  );
+
+  async function handleCaptureRequest(event) {
+    const requestId = event.data.requestId;
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+
+    function postResult(dataUrl) {
+      postToTrustedTop({
+        type: "INLINE_EDIT_SCREENSHOT_RESULT",
+        requestId,
+        dataUrl,
+        scrollX,
+        scrollY,
+      });
+    }
+
+    try {
+      // Wait for any pending web fonts to resolve so both inline metrics and
+      // the @font-face inlining below see the same loaded faces.
+      if (document.fonts && document.fonts.ready) {
+        try {
+          await document.fonts.ready;
+        } catch (_error) {}
+      }
+
+      const clone = document.documentElement.cloneNode(true);
+      inlineAll(document.documentElement, clone);
+
+      const removedNodes = clone.querySelectorAll("script,link[rel=\"stylesheet\"],style");
+      for (let index = 0; index < removedNodes.length; index += 1) {
+        removedNodes[index].remove();
+      }
+
+      stripExternal(clone);
+
+      // Re-embed web fonts as data-URI @font-face rules so the SVG rasterizer
+      // can resolve them — external font URLs aren't fetched during
+      // foreignObject rendering, which would otherwise force a fallback face
+      // and change text metrics.
+      const inlinedFontCss = await buildInlinedFontCss();
+      if (inlinedFontCss) {
+        const styleEl = document.createElement("style");
+        styleEl.textContent = inlinedFontCss;
+        const head = clone.querySelector("head");
+        if (head) head.appendChild(styleEl);
+        else clone.insertBefore(styleEl, clone.firstChild);
+      }
+
+      const html = new XMLSerializer().serializeToString(clone);
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
+        '<foreignObject width="100%" height="100%">' +
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;overflow:hidden">` +
+        `<div style="position:relative;left:-${scrollX}px;top:-${scrollY}px">` +
+        html +
+        "</div></div></foreignObject></svg>";
+      const svgUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      const image = new Image();
+      image.onload = function () {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d").drawImage(image, 0, 0);
+        postResult(canvas.toDataURL("image/png"));
+      };
+      image.onerror = function () {
+        postResult(null);
+      };
+      image.src = svgUrl;
+    } catch (_error) {
+      postResult(null);
+    }
+  }
+
+  window.addEventListener("message", function (event) {
+    if (!event.data) return;
+    // Only accept messages from the direct parent frame. Blocks sibling /
+    // unrelated-window postMessage senders that could otherwise reach us.
+    if (event.source !== window.parent) return;
+
+    const trustedParentOrigin = getTrustedParentOrigin(event);
+    if (!trustedParentOrigin) return;
+    trustedTopOrigin = trustedParentOrigin;
+
+    if (event.data.type === "INLINE_EDIT_PICK") {
+      const element = resolvePickTarget(event.data.x, event.data.y);
+      postToTrustedTop({
+        type: "INLINE_EDIT_PICK_RESULT",
+        seq: event.data.seq,
+        target: element ? describePickTarget(element, event.data.fresh === true) : null,
+      });
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_START") {
+      scrollForwarding = true;
+      emitScroll();
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_STOP") {
+      scrollForwarding = false;
+      if (scrollRaf) cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
+      return;
+    }
+
+    if (event.data.type === "INLINE_EDIT_SCROLL_BY") {
+      const { deltaX, deltaY, deltaMode } = event.data;
+      if (!scrollForwarding || !Number.isFinite(deltaX) || !Number.isFinite(deltaY)) return;
+      if (deltaMode !== 0 && deltaMode !== 1 && deltaMode !== 2) return;
+      const lineHeight =
+        parseFloat(getComputedStyle(document.documentElement).lineHeight) || DEFAULT_LINE_HEIGHT;
+      const scaleX = deltaMode === 1 ? lineHeight : deltaMode === 2 ? window.innerWidth : 1;
+      const scaleY = deltaMode === 1 ? lineHeight : deltaMode === 2 ? window.innerHeight : 1;
+      // The selection overlay receives the wheel event instead of this iframe.
+      // Instant scrolling preserves trackpad deltas even on smooth-scroll sites.
+      window.scrollBy({ left: deltaX * scaleX, top: deltaY * scaleY, behavior: "instant" });
+      emitScroll();
+      return;
+    }
+
+    if (event.data.type !== "INLINE_EDIT_CAPTURE_REQUEST") return;
+
+    handleCaptureRequest(event);
+  });
+})();
+
+
+</script></body>
+</html>
