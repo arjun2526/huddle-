@@ -16,7 +16,7 @@
     strokes: [], chat: [], ccOn: false, rec: null, joinedAt: 0, micId: '', camId: '', noise: true,
     panel: null, inMeeting: false, needSync: false, speaker: null, speakerAt: 0, boardOpen: false, boardNotified: false,
     brush: { c: BOARD_COLORS[0], w: 4, e: false }, session: false, admitted: false, everConnected: false, knock: null,
-    waitingRoom: true, waiting: new Map(), allowed: new Set(), pendingIn: new Map(), actx: null, analysers: new Map(), timerInt: null,
+    waitingRoom: true, sec: { locked: false, pass: '', hostShare: false, chat: true }, joinPass: '', presentCleanup: null, waiting: new Map(), allowed: new Set(), pendingIn: new Map(), actx: null, analysers: new Map(), timerInt: null,
   };
 
   /* ---------- utils ---------- */
@@ -32,7 +32,7 @@
   const fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const dirId = () => `${PREFIX}${S.room}-host`;
   const linkFor = code => `${location.href.split('#')[0].split('?')[0]}#/${code}`;
-  const inviteText = () => `Join my Huddle video call (code ${S.room}): ${linkFor(S.room)}`;
+  const inviteText = () => `Join my Huddle video call (code ${S.room}): ${linkFor(S.room)}` + (S.sec.pass ? `\nPasscode: ${S.sec.pass}` : '');
   async function shareInvite() {
     const text = inviteText();
     try {
@@ -143,12 +143,207 @@
     senders(kind).forEach(s => s.replaceTrack(track).catch(e => console.warn('replaceTrack', e)));
   }
 
+
+  /* ---------- backgrounds & effects ---------- */
+  const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+  const SEG_MODEL = 'https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite';
+  const BGS = [
+    { id: 'none', name: 'None', css: 'linear-gradient(135deg,#252932,#1c1f26)' },
+    { id: 'blur-soft', name: 'Slight blur', blur: 10, css: 'linear-gradient(135deg,#5b6476,#2a3040)' },
+    { id: 'blur', name: 'Blur', blur: 22, css: 'linear-gradient(135deg,#7c8598,#3b4252)' },
+    { id: 'studio', name: 'Studio', css: 'radial-gradient(circle at 50% 35%,#3a4153,#11131a 70%)', paint: (g, w, h) => { const r = g.createRadialGradient(w * .5, h * .35, 10, w * .5, h * .4, w * .75); r.addColorStop(0, '#3a4153'); r.addColorStop(1, '#0d0f14'); g.fillStyle = r; g.fillRect(0, 0, w, h); } },
+    { id: 'office', name: 'Office', css: 'linear-gradient(180deg,#d9d4c7 0 62%,#8a6f55 62% 100%)', paint: (g, w, h) => {
+      g.fillStyle = '#d8d2c4'; g.fillRect(0, 0, w, h);
+      const win = g.createLinearGradient(0, 0, 0, h * .6); win.addColorStop(0, '#cfe3f2'); win.addColorStop(1, '#eef4f6');
+      g.fillStyle = win; g.fillRect(w * .58, h * .1, w * .34, h * .5);
+      g.fillStyle = '#bdb5a5'; g.fillRect(w * .58, h * .34, w * .34, h * .012); g.fillRect(w * .748, h * .1, w * .006, h * .5);
+      g.fillStyle = '#8a6f55'; g.fillRect(0, h * .66, w, h * .34);
+      g.fillStyle = '#4f6b4a'; g.beginPath(); g.ellipse(w * .14, h * .5, w * .07, h * .17, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#6d5a48'; g.fillRect(w * .115, h * .6, w * .05, h * .08);
+    } },
+    { id: 'sunset', name: 'Sunset', css: 'linear-gradient(160deg,#ff9a6b,#c2557a 55%,#3b2a5a)', paint: (g, w, h) => { const l = g.createLinearGradient(0, 0, w * .4, h); l.addColorStop(0, '#ff9a6b'); l.addColorStop(.55, '#c2557a'); l.addColorStop(1, '#3b2a5a'); g.fillStyle = l; g.fillRect(0, 0, w, h); } },
+    { id: 'ocean', name: 'Ocean', css: 'linear-gradient(160deg,#4fd1c5,#2b6cb0 60%,#1a365d)', paint: (g, w, h) => { const l = g.createLinearGradient(0, 0, w * .4, h); l.addColorStop(0, '#4fd1c5'); l.addColorStop(.6, '#2b6cb0'); l.addColorStop(1, '#1a365d'); g.fillStyle = l; g.fillRect(0, 0, w, h); } },
+    { id: 'bokeh', name: 'Night lights', css: 'radial-gradient(circle at 20% 30%,#c6f36b55 0 8%,transparent 9%),radial-gradient(circle at 70% 60%,#f5a52455 0 10%,transparent 11%),radial-gradient(circle at 80% 20%,#4f8de055 0 7%,transparent 8%),#12141b', paint: (g, w, h) => {
+      g.fillStyle = '#12141b'; g.fillRect(0, 0, w, h);
+      const cols = ['#c6f36b', '#f5a524', '#4f8de0', '#e05297', '#ffffff'];
+      for (let i = 0; i < 42; i++) { const x = (Math.sin(i * 12.9898) * 43758.5453 % 1 + 1) % 1 * w, y = (Math.sin(i * 78.233) * 12345.678 % 1 + 1) % 1 * h, r = 12 + (i * 37 % 50);
+        const rg = g.createRadialGradient(x, y, 0, x, y, r); rg.addColorStop(0, cols[i % 5] + '66'); rg.addColorStop(1, cols[i % 5] + '00'); g.fillStyle = rg; g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); }
+    } },
+    { id: 'brand', name: 'Huddle', css: 'linear-gradient(135deg,#c6f36b,#7ccf4a 50%,#1f3d1a)', paint: (g, w, h) => {
+      const l = g.createLinearGradient(0, 0, w, h); l.addColorStop(0, '#1b2016'); l.addColorStop(1, '#0e0f12'); g.fillStyle = l; g.fillRect(0, 0, w, h);
+      g.strokeStyle = 'rgba(198,243,107,.16)'; g.lineWidth = 2; for (let i = -h; i < w; i += 46) { g.beginPath(); g.moveTo(i, h); g.lineTo(i + h, 0); g.stroke(); }
+      g.fillStyle = 'rgba(198,243,107,.85)'; g.font = `800 ${Math.round(h * .07)}px "Cabinet Grotesk", system-ui, sans-serif`; g.fillText('huddle.', w * .05, h * .12);
+    } },
+  ];
+  const FILTERS = [
+    { id: 'none', name: 'Natural', f: '' },
+    { id: 'warm', name: 'Warm', f: 'sepia(.22) saturate(1.25) brightness(1.04)' },
+    { id: 'cool', name: 'Cool', f: 'hue-rotate(-10deg) saturate(1.15) brightness(1.03) contrast(1.02)' },
+    { id: 'vivid', name: 'Vivid', f: 'saturate(1.55) contrast(1.08)' },
+    { id: 'soft', name: 'Soft', f: 'brightness(1.06) contrast(.9) saturate(.95)' },
+    { id: 'mono', name: 'Mono', f: 'grayscale(1) contrast(1.08)' },
+    { id: 'noir', name: 'Noir', f: 'grayscale(1) contrast(1.45) brightness(.9)' },
+    { id: 'retro', name: 'Retro', f: 'sepia(.55) contrast(1.1) saturate(1.2) hue-rotate(-8deg)' },
+  ];
+  const FX = { bg: 'none', filter: 'none', light: false, out: null, g: null, track: null, vid: null, seg: null, segP: null, segFail: false,
+    small: null, sg: null, mask: null, mg: null, person: null, pg: null, blurC: null, bgC: null, bgFor: '', timer: 0, running: false, lastMask: null };
+  try { const sv = JSON.parse(localStorage.getItem('huddle-fx') || '{}'); if (BGS.some(b => b.id === sv.bg)) FX.bg = sv.bg; if (FILTERS.some(f => f.id === sv.filter)) FX.filter = sv.filter; FX.light = !!sv.light; } catch {}
+  const canFilter = (() => { try { const g = document.createElement('canvas').getContext('2d'); g.filter = 'blur(1px)'; return g.filter === 'blur(1px)'; } catch { return false; } })();
+  const fxActive = () => FX.bg !== 'none' || (canFilter && (FX.filter !== 'none' || FX.light));
+  const fxFilter = () => [FILTERS.find(f => f.id === FX.filter)?.f || '', FX.light ? 'brightness(1.22) contrast(1.06) saturate(1.08)' : ''].join(' ').trim() || 'none';
+  function camOut() { return (fxActive() && S.camTrack && FX.track) ? FX.track : S.camTrack; }
+  function mkCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+
+  async function loadSeg() {
+    if (FX.seg || FX.segFail) return FX.seg;
+    if (!FX.segP) FX.segP = (async () => {
+      $('#fx-loading').hidden = false;
+      try {
+        const vision = await import(`${MP}/vision_bundle.mjs`);
+        const files = await vision.FilesetResolver.forVisionTasks(`${MP}/wasm`);
+        const make = delegate => vision.ImageSegmenter.createFromOptions(files, { baseOptions: { modelAssetPath: SEG_MODEL, delegate }, runningMode: 'VIDEO', outputCategoryMask: false, outputConfidenceMasks: true });
+        try { FX.seg = await make('GPU'); } catch { FX.seg = await make('CPU'); }
+      } catch (e) { console.warn('segmenter', e); FX.segFail = true; toast('Background effects couldn\'t load on this device. Filters still work.', 'sparkles'); }
+      $('#fx-loading').hidden = true;
+      return FX.seg;
+    })();
+    return FX.segP;
+  }
+  function fxEnsure() {
+    if (FX.out) return;
+    FX.out = mkCanvas(1280, 720); FX.g = FX.out.getContext('2d');
+    FX.vid = document.createElement('video'); FX.vid.muted = true; FX.vid.playsInline = true; FX.vid.autoplay = true; FX.vid.setAttribute('playsinline', '');
+    FX.vid.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none'; document.body.appendChild(FX.vid);
+    FX.small = mkCanvas(256, 144); FX.sg = FX.small.getContext('2d', { willReadFrequently: true });
+    FX.mask = mkCanvas(256, 144); FX.mg = FX.mask.getContext('2d');
+    FX.person = mkCanvas(1280, 720); FX.pg = FX.person.getContext('2d');
+    FX.blurC = mkCanvas(64, 36);
+    FX.track = FX.out.captureStream(30).getVideoTracks()[0];
+  }
+  function fxSize(w, h) {
+    const sc = Math.min(1, 1280 / w); const W = Math.round(w * sc / 2) * 2, H = Math.round(h * sc / 2) * 2;
+    if (FX.out.width !== W || FX.out.height !== H) { FX.out.width = FX.person.width = W; FX.out.height = FX.person.height = H; FX.bgFor = ''; }
+    const sw = 256, sh = Math.max(64, Math.round(256 * H / W));
+    if (FX.small.height !== sh) { FX.small.height = FX.mask.height = sh; }
+  }
+  function bgImage(W, H) {
+    const key = FX.bg + W + 'x' + H;
+    if (FX.bgFor === key) return FX.bgC;
+    const b = BGS.find(x => x.id === FX.bg); if (!b?.paint) return null;
+    FX.bgC = mkCanvas(W, H); b.paint(FX.bgC.getContext('2d'), W, H); FX.bgFor = key;
+    return FX.bgC;
+  }
+  function fxFrame() {
+    const v = FX.vid, g = FX.g;
+    if (!v.videoWidth) return;
+    fxSize(v.videoWidth, v.videoHeight);
+    const W = FX.out.width, H = FX.out.height;
+    const bg = BGS.find(x => x.id === FX.bg) || BGS[0];
+    const flt = canFilter ? fxFilter() : 'none';
+    if (bg.id === 'none' || !FX.seg) {
+      g.filter = flt; g.drawImage(v, 0, 0, W, H); g.filter = 'none';
+      if (bg.id !== 'none' && !FX.seg && !FX.segFail) loadSeg();
+      return;
+    }
+    // segmentation on a small frame (fast), then upscale the mask with smoothing for soft edges
+    FX.sg.drawImage(v, 0, 0, FX.small.width, FX.small.height);
+    try {
+      FX.seg.segmentForVideo(FX.small, performance.now(), res => {
+        const m = res.confidenceMasks?.[0]; if (!m) return;
+        const data = m.getAsFloat32Array(); const mw = m.width, mh = m.height;
+        if (FX.mask.width !== mw || FX.mask.height !== mh) { FX.mask.width = mw; FX.mask.height = mh; }
+        const img = FX.mg.createImageData(mw, mh); const px = img.data;
+        for (let i = 0, j = 3; i < data.length; i++, j += 4) { const c = data[i]; px[j] = c < .25 ? 0 : c > .75 ? 255 : (c - .25) * 510; }
+        FX.mg.putImageData(img, 0, 0);
+        m.close?.();
+      });
+    } catch (e) { console.warn('seg frame', e); }
+    // background layer
+    if (bg.blur) {
+      const f = bg.blur > 15 ? 22 : 12; const bw = Math.max(16, Math.round(W / f)), bh = Math.max(9, Math.round(H / f));
+      if (FX.blurC.width !== bw || FX.blurC.height !== bh) { FX.blurC.width = bw; FX.blurC.height = bh; }
+      const bctx2 = FX.blurC.getContext('2d'); bctx2.imageSmoothingQuality = 'high'; bctx2.drawImage(v, 0, 0, bw, bh);
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.filter = canFilter ? `blur(${bg.blur > 15 ? 6 : 3}px) ${flt === 'none' ? '' : flt}`.trim() : 'none';
+      g.drawImage(FX.blurC, -8, -8, W + 16, H + 16); g.filter = 'none';
+    } else {
+      const im = bgImage(W, H); if (im) g.drawImage(im, 0, 0); else { g.fillStyle = '#111'; g.fillRect(0, 0, W, H); }
+    }
+    // person layer = video clipped by mask
+    const pg = FX.pg; pg.save(); pg.clearRect(0, 0, W, H);
+    pg.imageSmoothingEnabled = true; pg.imageSmoothingQuality = 'high';
+    pg.filter = canFilter ? 'blur(2px)' : 'none'; pg.drawImage(FX.mask, 0, 0, W, H); pg.filter = 'none';
+    pg.globalCompositeOperation = 'source-in';
+    pg.filter = flt; pg.drawImage(v, 0, 0, W, H); pg.filter = 'none';
+    pg.restore();
+    g.drawImage(FX.person, 0, 0);
+  }
+  function fxLoop() {
+    if (!FX.running) return;
+    try { fxFrame(); } catch (e) { console.warn('fx', e); }
+    FX.timer = setTimeout(fxLoop, 1000 / 30);
+  }
+  function fxApply() {
+    try { localStorage.setItem('huddle-fx', JSON.stringify({ bg: FX.bg, filter: FX.filter, light: FX.light })); } catch {}
+    const want = fxActive() && !!S.camTrack;
+    if (want) {
+      fxEnsure();
+      if (FX.vid.srcObject?.getVideoTracks()[0] !== S.camTrack) { FX.vid.srcObject = new MediaStream([S.camTrack]); FX.vid.play().catch(() => {}); }
+      if (!FX.running) { FX.running = true; fxLoop(); }
+      if (FX.bg !== 'none') loadSeg();
+    } else if (FX.running) { FX.running = false; clearTimeout(FX.timer); }
+    if (S.inMeeting && S.camOn && S.camTrack) { setOutgoing('video', camOut()); renderLocal(); }
+    else if (!S.inMeeting) updatePreview();
+    fxPreview(); renderFxUI();
+    $('#lobby-fx')?.classList.toggle('on', fxActive());
+  }
+  function fxStop() { FX.running = false; clearTimeout(FX.timer); if (FX.vid) FX.vid.srcObject = null; }
+  function fxPreview() {
+    const v = $('#fx-video'); const t = camOut();
+    $('#fx-off').hidden = !!t;
+    const cur = v.srcObject?.getVideoTracks()[0];
+    if (cur !== t) { v.srcObject = t ? new MediaStream([t]) : null; if (t) v.play().catch(() => {}); }
+    v.classList.toggle('mirror', S.mirror);
+  }
+  function renderFxUI() {
+    $('#fx-bgs').innerHTML = BGS.map(b => `<button class="fx-bg ${FX.bg === b.id ? 'active' : ''}" data-bg="${b.id}" style="background:${b.css}" aria-pressed="${FX.bg === b.id}" title="${b.name}">
+      ${b.id === 'none' ? ico('ban') : b.blur ? ico('aperture') : ''}<span>${b.name}</span></button>`).join('');
+    $('#fx-filters').innerHTML = canFilter ? FILTERS.map(f => `<button class="fx-chip ${FX.filter === f.id ? 'active' : ''}" data-filter="${f.id}" aria-pressed="${FX.filter === f.id}">${f.name}</button>`).join('') : '';
+    $('#fx-filter-note').textContent = canFilter ? '' : 'Not supported in this browser';
+    $('#fx-light').checked = FX.light; $('#fx-light').closest('label').hidden = !canFilter;
+    icons();
+  }
+  $('#fx-bgs').onclick = e => { const b = e.target.closest('[data-bg]'); if (!b) return; FX.bg = b.dataset.bg; fxApply(); };
+  $('#fx-filters').onclick = e => { const b = e.target.closest('[data-filter]'); if (!b) return; FX.filter = b.dataset.filter; fxApply(); };
+  $('#fx-light').onchange = e => { FX.light = e.target.checked; fxApply(); };
+  function openFx() {
+    if (!S.camTrack) toast('Turn your camera on to use backgrounds and effects', 'video-off');
+    renderFxUI(); fxPreview(); $('#modal-fx').hidden = false;
+    if (FX.bg !== 'none') loadSeg();
+  }
+  $$('#modal-fx [data-close]').forEach(b => b.onclick = () => $('#modal-fx').hidden = true);
+  $('#modal-fx').onclick = e => { if (e.target.id === 'modal-fx') e.currentTarget.hidden = true; };
+  $('#lobby-fx').onclick = openFx;
+
+  /* picture-in-picture */
+  async function popOut() {
+    const pick = $('#spotlight .tile video') || $$('#grid .tile').find(t => t.dataset.key === S.speaker && t.dataset.key !== 'me')?.querySelector('video') || $$('#grid .tile').find(t => t.dataset.key !== 'me')?.querySelector('video') || $('#grid .tile video');
+    if (!pick || !pick.srcObject) { toast('There\'s no video to pop out yet', 'picture-in-picture-2'); return; }
+    try {
+      if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
+      if (pick.requestPictureInPicture) await pick.requestPictureInPicture();
+      else if (pick.webkitSetPresentationMode) pick.webkitSetPresentationMode('picture-in-picture');
+      else throw new Error('unsupported');
+    } catch { toast('Picture-in-picture isn\'t available in this browser', 'picture-in-picture-2'); }
+  }
+
   /* ---------- lobby ---------- */
   function updatePreview() {
     const v = $('#preview-video');
     const on = S.camOn && S.camTrack;
     $('#preview-off').hidden = !!on;
-    v.srcObject = on ? new MediaStream([S.camTrack]) : null;
+    const t = on ? camOut() : null;
+    if (v.srcObject?.getVideoTracks()[0] !== t) v.srcObject = t ? new MediaStream([t]) : null;
     $('#preview-msg').textContent = S.camOn && !S.camTrack ? 'Camera not available' : 'Camera is off';
     const a = $('#preview-avatar'); const nm = $('#input-name').value || 'You';
     a.textContent = initial(nm); a.style.background = colorFor(nm);
@@ -162,6 +357,7 @@
     $('#lobby-code').textContent = code;
     $('#lobby-link').value = linkFor(code);
     $('#lobby-status').textContent = '';
+    $('#pass-field').hidden = true; $('#input-pass').value = '';
     if (S.session && !S.inMeeting) endSession();
     setKnock(null);
     show('lobby');
@@ -172,6 +368,7 @@
     $('#lobby-status').textContent = 'Allow camera and microphone access when your browser asks.';
     if (!S.micTrack) S.micTrack = await getMic();
     if (S.camOn && !S.camTrack) S.camTrack = await getCam();
+    if (S.camTrack && fxActive()) fxApply();
     if (!S.micTrack) { S.micOn = false; }
     if (!S.camTrack) { S.camOn = false; }
     if (S.micTrack) S.micTrack.enabled = S.micOn;
@@ -223,7 +420,7 @@
   $('#lobby-cam').onclick = async () => {
     if (S.camOn) { S.camTrack?.stop(); S.camTrack = null; S.camOn = false; }
     else { S.camTrack = await getCam(); S.camOn = !!S.camTrack; if (!S.camTrack) toast('Camera is blocked or missing', 'video-off'); listDevices(); }
-    updatePreview();
+    fxApply();
   };
   $('#sel-mic').onchange = e => switchMic(e.target.value);
   $('#sel-cam').onchange = e => switchCam(e.target.value);
@@ -243,7 +440,8 @@
     if (!S.camOn) return;
     const t = await getCam(); if (!t) { toast('Could not switch camera', 'video-off'); return; }
     S.camTrack?.stop(); S.camTrack = t;
-    if (S.inMeeting) { setOutgoing('video', t); renderLocal(); } else updatePreview();
+    fxApply();
+    if (S.inMeeting) { setOutgoing('video', camOut()); renderLocal(); } else updatePreview();
   }
 
   /* ---------- join / peers ---------- */
@@ -263,6 +461,7 @@
     audioCtx();
     const btn = $('#btn-join'); btn.disabled = true; btn.textContent = 'Connecting…';
     S.name = ($('#input-name').value || '').trim() || 'Guest';
+    S.joinPass = ($('#input-pass').value || '').trim();
     try {
       S.me = `${PREFIX}${S.room}-${rand(8)}`;
       S.peer = await makePeer(S.me);
@@ -282,16 +481,22 @@
   function setKnock(state) {
     S.knock = state;
     const box = $('#knock'), join = $('#btn-join');
-    join.hidden = !!state && state !== 'denied';
+    const ended = ['denied', 'locked', 'need-pass', 'bad-pass'].includes(state);
+    join.hidden = !!state && !ended;
     box.hidden = !state;
     if (!state) return;
     box.dataset.state = state;
-    $('#knock-title').textContent = state === 'denied' ? 'Your request was declined' : state === 'waiting' ? 'Asking to join…' : 'Connecting to the room…';
-    $('#knock-text').textContent = state === 'denied'
-      ? 'Someone in the call declined your request. You can ask again.'
-      : state === 'waiting' ? 'You\'ll join the call when the host lets you in.' : 'Looking for the meeting host.';
-    $('#knock-cancel').hidden = state === 'denied';
-    join.textContent = state === 'denied' ? 'Ask to join again' : 'Join now';
+    const T = {
+      denied: ['Your request was declined', 'Someone in the call declined your request. You can ask again.'],
+      locked: ['This meeting is locked', 'The host isn\'t letting new people in right now. Try again later.'],
+      'need-pass': ['This meeting needs a passcode', 'Enter the passcode the host gave you.'],
+      'bad-pass': ['Wrong passcode', 'Check the passcode with the host and try again.'],
+      waiting: ['Asking to join…', 'You\'ll join the call when the host lets you in.'],
+      asking: ['Connecting to the room…', 'Looking for the meeting host.'],
+    }[state] || ['Connecting…', ''];
+    $('#knock-title').textContent = T[0]; $('#knock-text').textContent = T[1];
+    $('#knock-cancel').hidden = ended;
+    join.textContent = state === 'denied' || state === 'locked' ? 'Ask to join again' : (state === 'need-pass' || state === 'bad-pass') ? 'Join with passcode' : 'Join now';
   }
   $('#knock-cancel').onclick = () => { endSession(); setKnock(null); $('#lobby-status').textContent = 'Request cancelled.'; };
 
@@ -312,7 +517,7 @@
 
   function startMeeting() {
     S.inMeeting = true; S.joinedAt = Date.now(); S.needSync = true; S.boardNotified = false;
-    const v = (S.camOn && S.camTrack) ? S.camTrack : blankTrack();
+    const v = (S.camOn && S.camTrack) ? camOut() : blankTrack();
     const a = S.micTrack || silentTrack();
     S.localStream = new MediaStream([v, a].filter(Boolean));
     if (S.micTrack) S.micTrack.enabled = S.micOn;
@@ -369,11 +574,16 @@
     if (!S.session || S.dirPeer || !S.peer || S.peer.destroyed) return;
     const c = S.peer.connect(dirId(), { reliable: true });
     S.dirConn = c; let opened = false;
-    c.on('open', () => { opened = true; S.everConnected = true; c.send({ t: 'join', id: S.me, name: S.name, member: S.admitted }); });
+    c.on('open', () => { opened = true; S.everConnected = true; c.send({ t: 'join', id: S.me, name: S.name, member: S.admitted, pass: S.joinPass }); });
     c.on('data', d => {
       if (!d) return;
       if (d.t === 'wait') setKnock('waiting');
       else if (d.t === 'denied') { S.denied = true; endSession(); setKnock('denied'); }
+      else if (d.t === 'locked') { endSession(); setKnock('locked'); }
+      else if (d.t === 'need-pass' || d.t === 'bad-pass') {
+        endSession(); setKnock(d.t);
+        $('#pass-field').hidden = false; setTimeout(() => $('#input-pass').focus(), 50);
+      }
       else if (d.t === 'roster') {
         becomeAdmitted();
         d.ids.forEach(id => { if (id !== S.me && !S.peers.has(id)) connectTo(id); });
@@ -397,7 +607,11 @@
         c.on('data', d => {
           if (!d || d.t !== 'join' || typeof d.id !== 'string') return;
           c._pid = d.id; c._name = String(d.name || 'Guest').slice(0, 32);
-          if (S.peers.has(d.id) || S.roster.has(d.id) || !S.waitingRoom) admitConn(c);
+          const member = S.peers.has(d.id) || S.roster.has(d.id);
+          const refuse = t => { try { c.send({ t }); } catch {} setTimeout(() => { try { c.close(); } catch {} }, 800); };
+          if (!member && S.sec.locked) return refuse('locked');
+          if (!member && S.sec.pass && String(d.pass || '') !== S.sec.pass) return refuse(d.pass ? 'bad-pass' : 'need-pass');
+          if (member || !S.waitingRoom) admitConn(c);
           else {
             S.waiting.set(d.id, c); c.send({ t: 'wait' });
             renderWaiting(); knockAlert(d.id, c._name);
@@ -411,7 +625,7 @@
       dp.on('disconnected', () => { if (S.session && !dp.destroyed) setTimeout(() => { try { dp.reconnect(); } catch {} }, 1000); });
       dp.on('error', e => console.warn('dir error', e.type));
       if (!S.admitted) { becomeAdmitted(); toast('You\'re the host. People who open your link will ask to join.', 'shield-check'); }
-      else { toast('You\'re now the host of this call', 'shield-check'); broadcast(myInfo()); }
+      else { toast('You\'re now the host of this call', 'shield-check'); broadcast(myInfo()); broadcast(secMsg()); }
       renderHostUI(); renderPeople();
     } catch (e) {
       if (e.type === 'unavailable-id') setTimeout(connectDirectory, 500 + Math.random() * 800);
@@ -473,15 +687,62 @@
     if (a) admit(a.dataset.wAdmit); else if (d) deny(d.dataset.wDeny);
   };
   $('#admit-all').onclick = admitAll;
+  const isHost = () => !!S.dirPeer;
+  function secMsg() { return { t: 'sec', ...S.sec, wr: S.waitingRoom }; }
   function renderHostUI() {
-    const host = !!S.dirPeer;
+    const host = isHost();
     $('#host-settings').hidden = !host;
     $('#wr-toggle').checked = S.waitingRoom;
+    $('#lock-toggle').checked = S.sec.locked;
+    $('#hostshare-toggle').checked = S.sec.hostShare;
+    $('#chat-toggle').checked = S.sec.chat;
+    $('#pass-status').textContent = S.sec.pass ? `On. Guests must enter "${S.sec.pass}". It's added to your invite.` : 'Off. Anyone with the link can ask to join.';
+    $('#pass-clear').hidden = !S.sec.pass;
+    $('#pass-save').textContent = S.sec.pass ? 'Change' : 'Set';
+    $('#secure-label').textContent = S.sec.locked ? 'Locked' : 'Encrypted';
+    $('.secure-pill').classList.toggle('locked', S.sec.locked);
+    const chatOff = !S.sec.chat && !host;
+    $('#chat-input').disabled = chatOff;
+    $('#chat-input').placeholder = chatOff ? 'The host turned off chat' : 'Send a message to everyone';
+    $('#invite-text').value = inviteText();
+    renderPeople();
+  }
+  function secChanged(msg, icon) {
+    broadcast(secMsg()); renderHostUI();
+    if (msg) toast(msg, icon || 'shield-check');
+  }
+  $('#lock-toggle').onchange = e => { S.sec.locked = e.target.checked; secChanged(S.sec.locked ? 'Meeting locked. No one new can join.' : 'Meeting unlocked', S.sec.locked ? 'lock' : 'lock-open'); };
+  $('#hostshare-toggle').onchange = e => { S.sec.hostShare = e.target.checked; secChanged(S.sec.hostShare ? 'Only you can present now' : 'Everyone can present', 'monitor-up'); };
+  $('#chat-toggle').onchange = e => { S.sec.chat = e.target.checked; secChanged(S.sec.chat ? 'Chat is on for everyone' : 'Chat is off for participants', 'message-square'); };
+  $('#pass-save').onclick = () => {
+    const v = $('#pass-set').value.trim();
+    if (v.length < 4) { toast('Use at least 4 characters for the passcode', 'alert-circle'); return; }
+    S.sec.pass = v; $('#pass-set').value = '';
+    secChanged('Passcode set. New guests need it to join.', 'key-round');
+  };
+  $('#pass-set').onkeydown = e => { if (e.key === 'Enter') $('#pass-save').click(); };
+  $('#pass-clear').onclick = () => { S.sec.pass = ''; secChanged('Passcode removed', 'key-round'); };
+  $('#mute-all').onclick = () => { broadcast({ t: 'mute' }); toast('Everyone else was muted', 'mic-off'); };
+  $('#end-all').onclick = () => {
+    if (!confirm('End the meeting for everyone?')) return;
+    broadcast({ t: 'end' });
+    setTimeout(() => leaveMeeting('You ended the meeting', 'Everyone was removed from the call.'), 300);
+  };
+  function hostMute(id) { const p = S.peers.get(id); if (!p?.conn?.open) return; p.conn.send({ t: 'mute' }); toast(`${p.name} was muted`, 'mic-off'); }
+  function hostRemove(id) {
+    const p = S.peers.get(id); if (!p) return;
+    if (!confirm(`Remove ${p.name} from the call?`)) return;
+    try { p.conn?.send({ t: 'kick' }); } catch {}
+    broadcast({ t: 'removed', id });
+    S.allowed.delete(id);
+    setTimeout(() => removePeer(id, true), 400);
+    toast(`${p.name} was removed`, 'user-x');
   }
   $('#wr-toggle').onchange = e => {
     S.waitingRoom = e.target.checked;
     if (!S.waitingRoom) { admitAll(); toast('Waiting room off. People join automatically.', 'door-open'); }
     else toast('Waiting room on. You\'ll admit people before they join.', 'shield-check');
+    broadcast(secMsg());
   };
 
   function ensurePeer(id) {
@@ -513,7 +774,8 @@
     p.conn = conn;
     conn.on('open', () => {
       conn.send(myInfo());
-      if (S.screenStream) shareScreenTo(id);
+      if (isHost()) conn.send(secMsg());
+      if (S.screenStream && !(S.sec.hostShare && !isHost())) shareScreenTo(id);
       if (S.needSync) { S.needSync = false; conn.send({ t: 'sync-req' }); }
     });
     conn.on('data', d => onData(p, d));
@@ -525,8 +787,10 @@
   function handleCall(call) {
     const id = call.peer; const p = ensurePeer(id);
     if (call.metadata?.type === 'screen') {
+      if (S.sec.hostShare && !p.host && !isHost()) { try { call.close(); } catch {} return; }
       call.answer();
       p.screenCall = call;
+      call.on('error', () => dropScreen(p));
       call.on('stream', s => { p.screenStream = s; p.sharing = true; renderScreen(p); layout(); });
       call.on('close', () => dropScreen(p));
     } else {
@@ -578,7 +842,18 @@
         break;
       }
       case 'admit': if (typeof d.id === 'string') allow(d.id); break;
-      case 'chat': addMsg({ from: p.name, text: String(d.text).slice(0, 1000), ts: d.ts || Date.now(), mine: false }); break;
+      case 'sec':
+        if (!p.host) break;
+        S.sec = { locked: !!d.locked, pass: String(d.pass || '').slice(0, 32), hostShare: !!d.hostShare, chat: d.chat !== false };
+        if (typeof d.wr === 'boolean') S.waitingRoom = d.wr;
+        if (S.sec.hostShare && S.screenStream && !isHost()) { stopScreen(); toast('The host turned off presenting for participants', 'monitor-x'); }
+        renderHostUI();
+        break;
+      case 'mute': if (p.host && S.micOn) { toggleMic(); toast(`${p.name} (host) muted you`, 'mic-off'); } break;
+      case 'kick': if (p.host) leaveMeeting('You were removed from the meeting', `${p.name} (host) removed you from the call.`, true); break;
+      case 'end': if (p.host) leaveMeeting('The host ended the meeting', `${p.name} ended the call for everyone.`, true); break;
+      case 'removed': if (p.host && typeof d.id === 'string' && d.id !== S.me) { const r = S.peers.get(d.id); S.allowed.delete(d.id); if (r) { addSys(`${r.name} was removed by the host`); removePeer(d.id, true); } } break;
+      case 'chat': if (!S.sec.chat && !p.host) break; addMsg({ from: p.name, text: String(d.text).slice(0, 1000), ts: d.ts || Date.now(), mine: false }); break;
       case 'react': floatReaction(String(d.e).slice(0, 4), p.name); break;
       case 'screen-stop': dropScreen(p); break;
       case 'cap': showCaption(p.id, p.name, String(d.text).slice(0, 300), d.final); break;
@@ -630,7 +905,9 @@
   function renderLocal() {
     const el = tileEl('me', { muted: true });
     const cam = !!(S.camOn && S.camTrack);
-    setVideo(el, cam ? new MediaStream([S.camTrack]) : null);
+    const ot = cam ? camOut() : null;
+    const cur = el.querySelector('video').srcObject;
+    setVideo(el, ot ? (cur?.getVideoTracks()[0] === ot ? cur : new MediaStream([ot])) : null);
     paintTile(el, { name: `${S.name} (You)`, mic: S.micOn, cam, hand: S.hand, mirror: S.mirror });
     if (S.micTrack && S.analysers.get('me')?.tid !== S.micTrack.id) attachAnalyser('me', new MediaStream([S.micTrack]));
   }
@@ -762,10 +1039,10 @@
   }
   async function toggleCam() {
     if (S.camOn && S.camTrack) {
-      S.camTrack.stop(); S.camTrack = null; S.camOn = false; setOutgoing('video', blankTrack());
+      S.camTrack.stop(); S.camTrack = null; S.camOn = false; fxApply(); setOutgoing('video', blankTrack());
     } else {
       const t = await getCam(); if (!t) { toast('Camera is blocked. Allow it in your browser settings.', 'video-off'); return; }
-      S.camTrack = t; S.camOn = true; setOutgoing('video', t); listDevices();
+      S.camTrack = t; S.camOn = true; fxApply(); setOutgoing('video', camOut()); listDevices();
     }
     syncControls(); renderLocal(); broadcast(myInfo()); renderPeople();
   }
@@ -773,24 +1050,71 @@
   $('#ctl-cam').onclick = toggleCam;
 
   /* screen share */
+  const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat|; wv\)|GSA\//i.test(navigator.userAgent);
+  const canCaptureScreen = () => !!navigator.mediaDevices?.getDisplayMedia;
+  function startPresenting(s, cleanup) {
+    S.screenStream = s; S.presentCleanup = cleanup || null;
+    s.getVideoTracks()[0].addEventListener('ended', stopScreen);
+    S.peers.forEach((p, id) => shareScreenTo(id));
+    const el = tileEl('me-screen', { muted: true });
+    setVideo(el, s);
+    paintTile(el, { name: 'You are presenting', mic: true, cam: true, screen: true });
+    S.pinned = 'me-screen';
+    broadcast(myInfo()); syncControls(); layout(); renderPeople();
+    toast('You\'re presenting to everyone', 'monitor-up');
+  }
+  function openPresent(reason) {
+    $('#pr-why').textContent = reason || (inApp
+      ? 'This in-app browser can\'t share your screen. Open the link in Chrome or Safari, or present one of these instead.'
+      : 'Phone and tablet browsers don\'t let websites share the screen. Present one of these instead, or join from a computer to share your screen.');
+    $('#modal-present').hidden = false;
+  }
   async function toggleScreen() {
     if (S.screenStream) return stopScreen();
-    if (!navigator.mediaDevices?.getDisplayMedia) { toast('Screen sharing isn\'t supported on this device', 'monitor-x'); return; }
+    if (S.sec.hostShare && !isHost()) { toast('The host only lets the host present in this meeting', 'monitor-x'); return; }
+    if (!canCaptureScreen()) { openPresent(); return; }
     try {
       const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
-      S.screenStream = s;
-      s.getVideoTracks()[0].addEventListener('ended', stopScreen);
-      S.peers.forEach((p, id) => shareScreenTo(id));
-      const el = tileEl('me-screen', { muted: true });
-      setVideo(el, s);
-      paintTile(el, { name: 'You are presenting', mic: true, cam: true, screen: true });
-      S.pinned = 'me-screen';
-      broadcast(myInfo()); syncControls(); layout();
-      toast('You\'re sharing your screen', 'monitor-up');
+      startPresenting(s);
     } catch (e) {
-      if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast('Screen sharing is blocked in this window. Open the site in its own tab.', 'monitor-x');
+      if (e.name === 'NotAllowedError' || e.name === 'AbortError') return;
+      openPresent('Your browser blocked screen capture here. Try Chrome, Edge or Firefox on a computer, or present one of these instead.');
     }
   }
+  $$('#modal-present [data-close]').forEach(b => b.onclick = () => $('#modal-present').hidden = true);
+  $('#modal-present').onclick = e => { if (e.target.id === 'modal-present') e.currentTarget.hidden = true; };
+  $('#pr-camera').onclick = async () => {
+    $('#modal-present').hidden = true;
+    const ask = () => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    let s = null;
+    try { s = await ask(); } catch {
+      // many phones can only open one camera at a time: pause the selfie camera and retry
+      if (S.camOn && S.camTrack) { await toggleCam(); try { s = await ask(); toast('Your selfie camera is paused while you present', 'video-off'); } catch {} }
+    }
+    if (!s) { toast('Couldn\'t open the back camera. Check camera permissions.', 'camera-off'); return; }
+    startPresenting(s);
+  };
+  $('#pr-image').onclick = () => $('#pr-file').click();
+  $('#pr-file').onchange = e => {
+    const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
+    $('#modal-present').hidden = true;
+    const img = new Image(); const url = URL.createObjectURL(f);
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = 1920; c.height = 1080;
+      const g = c.getContext('2d');
+      const paint = () => {
+        g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
+        const sc = Math.min(c.width / img.width, c.height / img.height);
+        const w = img.width * sc, h = img.height * sc;
+        g.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+      };
+      paint(); const iv = setInterval(paint, 500);
+      const s = c.captureStream(5);
+      startPresenting(s, () => { clearInterval(iv); URL.revokeObjectURL(url); });
+    };
+    img.onerror = () => toast('That image couldn\'t be opened', 'image-off');
+    img.src = url;
+  };
   function shareScreenTo(id) {
     const p = S.peers.get(id); if (!p || !S.screenStream) return;
     try { p.outScreen?.close(); } catch {}
@@ -799,11 +1123,12 @@
   function stopScreen() {
     if (!S.screenStream) return;
     S.screenStream.getTracks().forEach(t => t.stop()); S.screenStream = null;
+    try { S.presentCleanup?.(); } catch {} S.presentCleanup = null;
     S.peers.forEach(p => { try { p.outScreen?.close(); } catch {} p.outScreen = null; });
     broadcast({ t: 'screen-stop' }); broadcast(myInfo());
     $('[data-key="me-screen"]')?.remove();
     if (S.pinned === 'me-screen') S.pinned = null;
-    syncControls(); layout();
+    syncControls(); layout(); renderPeople();
   }
   $('#ctl-screen').onclick = toggleScreen;
 
@@ -837,6 +1162,8 @@
     else if (a === 'devices') { listDevices(); $('#modal-devices').hidden = false; }
     else if (a === 'share') shareInvite();
     else if (a === 'hand') $('#ctl-hand').click();
+    else if (a === 'effects') openFx();
+    else if (a === 'pip') popOut();
     else if (a === 'cc') toggleCC();
     else if (a === 'board') toggleBoard();
     else openPanel(a);
@@ -871,10 +1198,16 @@
       <div class="pname">${esc(r.name)}${r.host ? ' <small class="host-tag">Host</small>' : ''}${r.sharing ? ' <small>· presenting</small>' : ''}</div>
       <div class="icons">${r.hand ? `<span class="hand-on" title="Hand raised">${ico('hand')}</span>` : ''}
       <span class="${r.cam ? '' : 'off'}" title="${r.cam ? 'Camera on' : 'Camera off'}">${ico(r.cam ? 'video' : 'video-off')}</span>
-      <span class="${r.mic ? '' : 'off'}" title="${r.mic ? 'Mic on' : 'Muted'}">${ico(r.mic ? 'mic' : 'mic-off')}</span></div></li>`).join('');
+      <span class="${r.mic ? '' : 'off'}" title="${r.mic ? 'Mic on' : 'Muted'}">${ico(r.mic ? 'mic' : 'mic-off')}</span></div>
+      ${isHost() && r.id ? `<div class="host-btns"><button class="icon-btn sm" data-h-mute="${esc(r.id)}" title="Mute ${esc(r.name)}" aria-label="Mute ${esc(r.name)}" ${r.mic ? '' : 'disabled'}>${ico('mic-off')}</button><button class="icon-btn sm danger" data-h-kick="${esc(r.id)}" title="Remove ${esc(r.name)}" aria-label="Remove ${esc(r.name)}">${ico('user-x')}</button></div>` : ''}</li>`).join('');
     icons();
     const n = rows.length; $('#badge-people').textContent = n; $('#people-count').textContent = n;
   }
+
+  $('#people').onclick = e => {
+    const m = e.target.closest('[data-h-mute]'), k = e.target.closest('[data-h-kick]');
+    if (m) hostMute(m.dataset.hMute); else if (k) hostRemove(k.dataset.hKick);
+  };
 
   /* ---------- chat ---------- */
   function linkify(s) { return esc(s).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'); }
@@ -895,6 +1228,7 @@
   $('#chat-form').onsubmit = e => {
     e.preventDefault();
     const t = $('#chat-input').value.trim(); if (!t) return;
+    if (!S.sec.chat && !isHost()) { toast('The host turned off chat', 'message-square-off'); return; }
     const m = { t: 'chat', text: t, ts: Date.now() };
     broadcast(m); addMsg({ from: S.name, text: t, ts: m.ts, mine: true });
     $('#chat-input').value = '';
@@ -979,20 +1313,25 @@
     $$('#stage .tile').forEach(t => t.remove());
     $('#chat-list').querySelectorAll('.msg').forEach(m => m.remove()); $('#chat-empty').hidden = false;
     $('#captions').innerHTML = ''; S.chat = []; S.strokes = []; redrawBoard();
+    S.sec = { locked: false, pass: '', hostShare: false, chat: true }; S.waitingRoom = true; $('#chat-input').disabled = false;
     S.boardOpen = false; $('#board').hidden = true; S.ccOn = false; S.hand = false; S.pinned = null; closePanel();
   }
-  $('#ctl-leave').onclick = () => {
+  function leaveMeeting(title, detail, forced) {
+    if (!S.inMeeting) return;
     const mins = Math.max(1, Math.round((Date.now() - S.joinedAt) / 60000));
     teardown(); chime(false);
-    S.camTrack?.stop(); S.camTrack = null; S.micTrack?.stop(); S.micTrack = null; S.camOn = true; S.micOn = true;
-    $('#left-duration').textContent = `You were in ${S.room} for about ${mins} minute${mins === 1 ? '' : 's'}.`;
+    fxStop(); S.camTrack?.stop(); S.camTrack = null; S.micTrack?.stop(); S.micTrack = null; S.camOn = true; S.micOn = true;
+    $('#left-title').textContent = title || 'You left the meeting';
+    $('#left-duration').textContent = (detail ? detail + ' ' : '') + `You were in ${S.room} for about ${mins} minute${mins === 1 ? '' : 's'}.`;
+    $('#btn-rejoin').hidden = !!forced;
     show('left');
-  };
+  }
+  $('#ctl-leave').onclick = () => leaveMeeting();
   $('#btn-rejoin').onclick = () => enterLobby(S.room);
   $('#btn-home').onclick = goHome;
   function goHome() {
     if (S.inMeeting) teardown(); else if (S.session) endSession();
-    setKnock(null);
+    setKnock(null); fxStop();
     S.camTrack?.stop(); S.camTrack = null; S.micTrack?.stop(); S.micTrack = null; S.camOn = true; S.micOn = true;
     try { history.replaceState(null, '', location.pathname + location.search); } catch { try { location.hash = ''; } catch {} }
     document.title = 'Huddle — Video meetings with a link';
@@ -1002,16 +1341,18 @@
 
   /* ---------- shortcuts ---------- */
   document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { ['#modal-devices', '#modal-invite', '#modal-fx', '#modal-present'].forEach(s => { const m = $(s); if (m) m.hidden = true; }); }
     if (!S.inMeeting) return;
     const mod = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase();
     if (mod && !e.altKey && k === 'd') { e.preventDefault(); toggleMic(); }
     else if (mod && !e.altKey && k === 'e') { e.preventDefault(); toggleCam(); }
     else if (mod && e.altKey && k === 'h') { e.preventDefault(); toggleHand(); }
     else if (mod && e.altKey && k === 'c') { e.preventDefault(); openPanel('chat'); }
-    else if (k === 'escape') { $('#modal-devices').hidden = true; $('#modal-invite').hidden = true; rp.hidden = true; $('#more-pop').hidden = true; }
+    else if (k === 'escape') { $('#modal-devices').hidden = true; $('#modal-invite').hidden = true; $('#modal-fx').hidden = true; $('#modal-present').hidden = true; rp.hidden = true; $('#more-pop').hidden = true; }
   });
 
   /* ---------- boot ---------- */
+  if (!canCaptureScreen() || inApp) { $('#ctl-screen').title = 'Present'; $('#ctl-screen').setAttribute('aria-label', 'Present'); }
   icons();
   const initCode = parseCode(location.hash);
   if (initCode) enterLobby(initCode); else show('home');

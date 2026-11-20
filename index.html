@@ -73,6 +73,7 @@
         <div class="preview-controls">
           <button class="round" id="lobby-mic" aria-label="Toggle microphone"><i data-lucide="mic"></i></button>
           <button class="round" id="lobby-cam" aria-label="Toggle camera"><i data-lucide="video"></i></button>
+          <button class="round" id="lobby-fx" aria-label="Backgrounds and effects" title="Backgrounds &amp; effects"><i data-lucide="sparkles"></i></button>
         </div>
       </div>
       <div class="device-row">
@@ -86,6 +87,10 @@
       <label class="field">
         <span>Your name</span>
         <input id="input-name" maxlength="32" placeholder="What should people call you?" autocomplete="name" />
+      </label>
+      <label class="field" id="pass-field" hidden>
+        <span>Meeting passcode</span>
+        <input id="input-pass" maxlength="32" placeholder="Enter the passcode from the host" autocomplete="off" />
       </label>
       <button class="btn btn-primary btn-lg wide" id="btn-join">Join now</button>
       <div class="knock" id="knock" hidden aria-live="polite">
@@ -159,7 +164,19 @@
           <div class="host-settings" id="host-settings" hidden>
             <h3>Host controls</h3>
             <label class="switch-row"><span><b>Waiting room</b><small>Admit people before they join</small></span><input type="checkbox" id="wr-toggle" checked role="switch" /></label>
+            <label class="switch-row"><span><b>Lock meeting</b><small>No one new can join or ask to join</small></span><input type="checkbox" id="lock-toggle" role="switch" /></label>
+            <div class="pass-row">
+              <span><b>Passcode</b><small id="pass-status">Off. Anyone with the link can ask to join.</small></span>
+              <div class="share-row"><input id="pass-set" maxlength="32" placeholder="Set a passcode" autocomplete="off" aria-label="Meeting passcode" /><button class="btn btn-ghost sm" id="pass-save">Set</button><button class="btn btn-ghost sm" id="pass-clear" hidden>Remove</button></div>
+            </div>
+            <label class="switch-row"><span><b>Only host can present</b><small>Participants can't share their screen</small></span><input type="checkbox" id="hostshare-toggle" role="switch" /></label>
+            <label class="switch-row"><span><b>Allow chat</b><small>Let everyone send messages</small></span><input type="checkbox" id="chat-toggle" checked role="switch" /></label>
+            <div class="host-actions">
+              <button class="btn btn-ghost sm" id="mute-all"><i data-lucide="mic-off"></i> Mute everyone</button>
+              <button class="btn btn-danger sm" id="end-all"><i data-lucide="power"></i> End meeting for all</button>
+            </div>
           </div>
+          <div class="secure-note"><i data-lucide="shield-check"></i><p><b>Encrypted peer-to-peer</b><span>Video, audio and chat go straight between devices with WebRTC encryption (DTLS-SRTP). Nothing passes through a Huddle server.</span></p></div>
           <h3 class="kbd-only">Shortcuts</h3>
           <dl class="keys kbd-only">
             <dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Mute / unmute</dd>
@@ -176,6 +193,7 @@
     <div class="bar-left">
       <span id="meet-clock"></span><span class="sep">|</span><span class="mono" id="bar-code"></span>
       <span class="timer" id="meet-timer">00:00</span>
+      <span class="secure-pill" title="Calls are encrypted peer-to-peer"><i data-lucide="lock"></i><span id="secure-label">Encrypted</span></span>
     </div>
     <div class="bar-center">
       <button class="ctl" id="ctl-mic" title="Microphone (Ctrl+D)" aria-label="Toggle microphone"><i data-lucide="mic"></i></button>
@@ -198,6 +216,8 @@
           <button data-act="info" class="show-sm"><i data-lucide="info"></i> Meeting details</button>
           <button data-act="cc" class="show-md"><i data-lucide="captions"></i> Live captions</button>
           <button data-act="board" class="show-md"><i data-lucide="pen-tool"></i> Whiteboard</button>
+          <button data-act="effects"><i data-lucide="sparkles"></i> Backgrounds &amp; effects</button>
+          <button data-act="pip"><i data-lucide="picture-in-picture-2"></i> Pop out video</button>
           <button data-act="layout"><i data-lucide="layout-grid"></i> <span id="layout-label">Switch to spotlight</span></button>
           <button data-act="mirror"><i data-lucide="flip-horizontal"></i> Mirror my video</button>
           <button data-act="devices"><i data-lucide="settings"></i> Audio &amp; video settings</button>
@@ -217,7 +237,7 @@
 <!-- LEFT -->
 <section id="view-left" class="view" aria-label="You left the meeting">
   <main class="left-main">
-    <h2>You left the meeting</h2>
+    <h2 id="left-title">You left the meeting</h2>
     <p class="muted" id="left-duration"></p>
     <div class="left-actions">
       <button class="btn btn-ghost" id="btn-rejoin">Rejoin</button>
@@ -243,6 +263,32 @@
     <p class="muted tiny">Copy this message and send it to anyone you want in the call.</p>
     <textarea id="invite-text" readonly rows="3" aria-label="Invite message"></textarea>
     <button class="btn btn-primary wide" id="invite-copy"><i data-lucide="copy"></i> Copy invite</button>
+  </div>
+</div>
+
+<!-- Effects modal -->
+<div class="modal" id="modal-fx" hidden>
+  <div class="modal-card fx-card" role="dialog" aria-modal="true" aria-labelledby="fx-title">
+    <div class="modal-head"><h3 id="fx-title">Backgrounds &amp; effects</h3><button class="icon-btn" data-close aria-label="Close"><i data-lucide="x"></i></button></div>
+    <div class="fx-preview"><video id="fx-video" autoplay playsinline muted></video><div class="fx-off" id="fx-off">Turn your camera on to preview effects</div><div class="fx-loading" id="fx-loading" hidden><span class="knock-spin"></span> Loading background effects…</div></div>
+    <p class="fx-label">Background</p>
+    <div class="fx-grid" id="fx-bgs"></div>
+    <p class="fx-label">Filter <small id="fx-filter-note" class="muted"></small></p>
+    <div class="fx-chips" id="fx-filters"></div>
+    <label class="check fx-check"><input type="checkbox" id="fx-light" /> Low-light boost</label>
+  </div>
+</div>
+
+<!-- Present modal (when the browser can't capture the screen) -->
+<div class="modal" id="modal-present" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pr-title">
+    <div class="modal-head"><h3 id="pr-title">Present to the call</h3><button class="icon-btn" data-close aria-label="Close"><i data-lucide="x"></i></button></div>
+    <p class="muted tiny" id="pr-why">Phone browsers don't let websites share the screen. You can present one of these instead, or join from a computer to share your screen.</p>
+    <div class="pr-options">
+      <button class="pr-opt" id="pr-camera"><i data-lucide="camera"></i><span><b>Back camera</b><small>Show a document, whiteboard or object</small></span></button>
+      <button class="pr-opt" id="pr-image"><i data-lucide="image"></i><span><b>A photo or screenshot</b><small>Pick an image from your device</small></span></button>
+    </div>
+    <input type="file" id="pr-file" accept="image/*" hidden />
   </div>
 </div>
 
