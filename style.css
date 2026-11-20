@@ -488,3 +488,16 @@ button{-webkit-tap-highlight-color:transparent}
 .ctl{transition:background .15s,transform .1s,box-shadow .2s}
 .ctl.on{box-shadow:0 0 0 4px var(--accent-soft)}
 @media (max-width:960px){ .secure-pill{display:none} }
+
+/* ---------- presenter bar ---------- */
+.pres-bar{position:absolute;left:50%;bottom:48px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:999px;background:rgba(18,20,26,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:calc(100% - 20px)}
+.pres-bar [hidden]{display:none!important}
+.pb-label{font-size:13px;font-variant-numeric:tabular-nums;min-width:46px;text-align:center}
+#pb-seek{width:min(240px,34vw);accent-color:var(--accent)}
+.pb-stop{padding:6px 12px;font-size:13px;min-height:32px;border-radius:999px}
+.pb-stop svg{width:14px;height:14px}
+.pr-tip{margin-top:12px;font-size:13px;color:var(--text);background:var(--accent-soft);border:1px solid rgba(198,243,107,.2);padding:10px 12px;border-radius:12px}
+#modal-present .modal-card{max-height:calc(100dvh - 32px);overflow:auto}
+
+.tile .pres-bar{bottom:48px}
+@media (max-width:640px){.tile .pres-bar{bottom:44px;gap:4px;padding:4px 6px}#pb-seek{width:28vw}}

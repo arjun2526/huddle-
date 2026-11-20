@@ -125,6 +125,14 @@
       </div>
       <div class="captions" id="captions" aria-live="polite"></div>
       <div class="reactions-layer" id="reactions-layer"></div>
+      <div class="pres-bar" id="pres-bar" hidden>
+        <button class="icon-btn sm" id="pb-prev" aria-label="Previous slide"><i data-lucide="chevron-left"></i></button>
+        <span class="pb-label" id="pb-label">1 / 1</span>
+        <button class="icon-btn sm" id="pb-next" aria-label="Next slide"><i data-lucide="chevron-right"></i></button>
+        <button class="icon-btn sm" id="pb-play" aria-label="Pause video"><i data-lucide="pause"></i></button>
+        <input type="range" id="pb-seek" min="0" max="1000" value="0" aria-label="Video position" />
+        <button class="btn btn-danger pb-stop" id="pb-stop"><i data-lucide="square"></i> Stop</button>
+      </div>
     </div>
 
     <aside class="panel" id="panel" hidden>
@@ -285,10 +293,14 @@
     <div class="modal-head"><h3 id="pr-title">Present to the call</h3><button class="icon-btn" data-close aria-label="Close"><i data-lucide="x"></i></button></div>
     <p class="muted tiny" id="pr-why">Phone browsers don't let websites share the screen. You can present one of these instead, or join from a computer to share your screen.</p>
     <div class="pr-options">
+      <button class="pr-opt" id="pr-screen" hidden><i data-lucide="monitor-up"></i><span><b>Your screen</b><small>Share everything on your phone or tablet</small></span></button>
       <button class="pr-opt" id="pr-camera"><i data-lucide="camera"></i><span><b>Back camera</b><small>Show a document, whiteboard or object</small></span></button>
-      <button class="pr-opt" id="pr-image"><i data-lucide="image"></i><span><b>A photo or screenshot</b><small>Pick an image from your device</small></span></button>
+      <button class="pr-opt" id="pr-image"><i data-lucide="image"></i><span><b>Photos or screenshots</b><small>Pick one or more, then swipe through them like slides</small></span></button>
+      <button class="pr-opt" id="pr-video"><i data-lucide="clapperboard"></i><span><b>A video or screen recording</b><small>Plays for everyone with sound</small></span></button>
     </div>
-    <input type="file" id="pr-file" accept="image/*" hidden />
+    <p class="pr-tip" id="pr-tip" hidden></p>
+    <input type="file" id="pr-file" accept="image/*" multiple hidden />
+    <input type="file" id="pr-vfile" accept="video/*" hidden />
   </div>
 </div>
 

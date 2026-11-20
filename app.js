@@ -1050,10 +1050,15 @@
   $('#ctl-cam').onclick = toggleCam;
 
   /* screen share */
-  const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat|; wv\)|GSA\//i.test(navigator.userAgent);
+  const UA = navigator.userAgent;
+  const inApp = /FBAN|FBAV|Instagram|Line\/|WhatsApp|Snapchat|; wv\)|GSA\//i.test(UA);
+  const isIOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(UA);
+  const isMobile = isIOS || isAndroid || /Mobi/i.test(UA);
+  const iosMajor = (() => { const m = UA.match(/OS (\d+)[_.]\d+.*like Mac OS X/) || UA.match(/Version\/(\d+)/); return m ? +m[1] : 0; })();
   const canCaptureScreen = () => !!navigator.mediaDevices?.getDisplayMedia;
-  function startPresenting(s, cleanup) {
-    S.screenStream = s; S.presentCleanup = cleanup || null;
+  function startPresenting(s, cleanup, ctl) {
+    S.screenStream = s; S.presentCleanup = cleanup || null; S.presentCtl = ctl || null;
     s.getVideoTracks()[0].addEventListener('ended', stopScreen);
     S.peers.forEach((p, id) => shareScreenTo(id));
     const el = tileEl('me-screen', { muted: true });
@@ -1061,28 +1066,86 @@
     paintTile(el, { name: 'You are presenting', mic: true, cam: true, screen: true });
     S.pinned = 'me-screen';
     broadcast(myInfo()); syncControls(); layout(); renderPeople();
+    presBar();
     toast('You\'re presenting to everyone', 'monitor-up');
   }
-  function openPresent(reason) {
-    $('#pr-why').textContent = reason || (inApp
-      ? 'This in-app browser can\'t share your screen. Open the link in Chrome or Safari, or present one of these instead.'
-      : 'Phone and tablet browsers don\'t let websites share the screen. Present one of these instead, or join from a computer to share your screen.');
+  function presBar() {
+    const c = S.presentCtl, bar = $('#pres-bar');
+    bar.hidden = !S.screenStream || !c;
+    if (bar.hidden) { $('#stage').appendChild(bar); return; }
+    const tile = $('[data-key="me-screen"]'); if (tile && bar.parentElement !== tile) tile.appendChild(bar);
+    const slides = c.kind === 'slides' && c.count > 1, vid = c.kind === 'video';
+    $('#pb-prev').hidden = $('#pb-next').hidden = $('#pb-label').hidden = !slides;
+    $('#pb-play').hidden = $('#pb-seek').hidden = !vid;
+    if (slides) { $('#pb-label').textContent = `${c.index + 1} / ${c.count}`; $('#pb-prev').disabled = c.index === 0; $('#pb-next').disabled = c.index === c.count - 1; }
+    if (vid) { const p = c.paused(); $('#pb-play').innerHTML = `<i data-lucide="${p ? 'play' : 'pause'}"></i>`; $('#pb-play').setAttribute('aria-label', p ? 'Play video' : 'Pause video'); }
+    icons();
+  }
+  $('#pb-prev').onclick = () => S.presentCtl?.go?.(-1);
+  $('#pb-next').onclick = () => S.presentCtl?.go?.(1);
+  $('#pb-play').onclick = () => S.presentCtl?.toggle?.();
+  $('#pb-seek').oninput = e => S.presentCtl?.seek?.(e.target.value / 1000);
+  $('#pb-stop').onclick = () => stopScreen();
+  ['click', 'dblclick', 'touchstart'].forEach(ev => $('#pres-bar').addEventListener(ev, e => e.stopPropagation(), { passive: true }));
+  // swipe between slides on the presenter's own tile
+  let swX = null;
+  $('#stage').addEventListener('touchstart', e => { if (S.presentCtl?.kind === 'slides' && e.target.closest('[data-key="me-screen"]')) swX = e.touches[0].clientX; }, { passive: true });
+  $('#stage').addEventListener('touchend', e => { if (swX == null) return; const dx = e.changedTouches[0].clientX - swX; swX = null; if (Math.abs(dx) > 50) S.presentCtl?.go?.(dx < 0 ? 1 : -1); });
+  document.addEventListener('keydown', e => {
+    if (S.presentCtl?.kind !== 'slides' || e.target.closest('input,textarea')) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') S.presentCtl.go(1);
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') S.presentCtl.go(-1);
+  });
+
+  function presentReason() {
+    if (inApp) return { why: 'This in-app browser can\'t share your screen. Open the link in Safari or Chrome, or present one of these instead.' };
+    if (isIOS && !canCaptureScreen()) return { why: `Screen sharing from Safari needs iOS/iPadOS 27 or newer${iosMajor ? ` (you have ${iosMajor})` : ''}. Update in Settings → General → Software Update, then open this link in Safari. Until then, present one of these:` };
+    if (isAndroid) return { why: 'Android browsers (Chrome, Samsung Internet, Firefox) don\'t allow websites to share the screen yet. Present one of these instead:', tip: 'Tip: to show an app, swipe down and tap Screen record, then present the recording here.' };
+    if (isMobile) return { why: 'This browser doesn\'t allow websites to share the screen. Present one of these instead:' };
+    return { why: 'This browser doesn\'t support screen sharing. Try Chrome, Edge, Firefox or Safari, or present one of these instead.' };
+  }
+  function openPresent(r) {
+    r = typeof r === 'string' ? { why: r } : (r || presentReason());
+    $('#pr-why').textContent = r.why;
+    $('#pr-tip').hidden = !r.tip; $('#pr-tip').textContent = r.tip || '';
+    $('#pr-screen').hidden = !(canCaptureScreen() && !inApp && r.offerScreen);
     $('#modal-present').hidden = false;
+  }
+  async function captureScreen() {
+    const md = navigator.mediaDevices;
+    const tries = isMobile ? [{ video: true }] : [{ video: { frameRate: { ideal: 30 } }, audio: true }, { video: true }];
+    let last;
+    for (const c of tries) {
+      const t0 = performance.now();
+      try { return await md.getDisplayMedia(c); }
+      catch (e) {
+        last = e; e.fast = performance.now() - t0 < 700;
+        if (e.name === 'NotAllowedError' || e.name === 'AbortError' || e.name === 'NotReadableError') break;
+      }
+    }
+    throw last;
   }
   async function toggleScreen() {
     if (S.screenStream) return stopScreen();
     if (S.sec.hostShare && !isHost()) { toast('The host only lets the host present in this meeting', 'monitor-x'); return; }
-    if (!canCaptureScreen()) { openPresent(); return; }
+    if (!canCaptureScreen() || inApp) { openPresent(); return; }
+    // phones and tablets: let people choose screen vs camera/photos/video
+    if (isMobile && !S._prChose) { openPresent({ why: 'What would you like to present?', offerScreen: true }); return; }
+    S._prChose = false;
     try {
-      const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 30 } }, audio: true });
-      startPresenting(s);
+      startPresenting(await captureScreen());
+      if (isMobile) toast('Sharing your screen. Come back to Huddle to stop.', 'monitor-up');
     } catch (e) {
+      // older Android browsers reject instantly without showing a picker
+      if (e.name === 'NotAllowedError' && isMobile && e.fast) { openPresent(isAndroid ? presentReason() : { why: 'Screen sharing was blocked. Check Settings → Safari → Screen Sharing, or present one of these instead:' }); return; }
       if (e.name === 'NotAllowedError' || e.name === 'AbortError') return;
-      openPresent('Your browser blocked screen capture here. Try Chrome, Edge or Firefox on a computer, or present one of these instead.');
+      if (e.name === 'NotReadableError') { toast('Your device couldn\'t start screen capture. Close other screen recorders and try again.', 'monitor-x'); return; }
+      openPresent();
     }
   }
   $$('#modal-present [data-close]').forEach(b => b.onclick = () => $('#modal-present').hidden = true);
   $('#modal-present').onclick = e => { if (e.target.id === 'modal-present') e.currentTarget.hidden = true; };
+  $('#pr-screen').onclick = () => { $('#modal-present').hidden = true; S._prChose = true; toggleScreen(); };
   $('#pr-camera').onclick = async () => {
     $('#modal-present').hidden = true;
     const ask = () => navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
@@ -1094,26 +1157,69 @@
     if (!s) { toast('Couldn\'t open the back camera. Check camera permissions.', 'camera-off'); return; }
     startPresenting(s);
   };
+  function presentCanvas() {
+    const c = document.createElement('canvas'); c.width = 1920; c.height = 1080;
+    return { c, g: c.getContext('2d') };
+  }
+  function fit(g, src, sw, sh) {
+    g.fillStyle = '#000'; g.fillRect(0, 0, 1920, 1080);
+    if (!sw || !sh) return;
+    const sc = Math.min(1920 / sw, 1080 / sh), w = sw * sc, h = sh * sc;
+    g.drawImage(src, (1920 - w) / 2, (1080 - h) / 2, w, h);
+  }
   $('#pr-image').onclick = () => $('#pr-file').click();
-  $('#pr-file').onchange = e => {
+  $('#pr-file').onchange = async e => {
+    const files = [...(e.target.files || [])].slice(0, 50); e.target.value = ''; if (!files.length) return;
+    $('#modal-present').hidden = true;
+    const urls = files.map(f => URL.createObjectURL(f));
+    const load = u => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.onerror = () => r(null); i.src = u; });
+    const imgs = (await Promise.all(urls.map(load))).filter(Boolean);
+    if (!imgs.length) { urls.forEach(u => URL.revokeObjectURL(u)); toast('Those images couldn\'t be opened', 'image-off'); return; }
+    const { c, g } = presentCanvas();
+    const ctl = { kind: 'slides', index: 0, count: imgs.length };
+    const paint = () => { const i = imgs[ctl.index]; fit(g, i, i.naturalWidth, i.naturalHeight); };
+    ctl.go = d => { const n = Math.max(0, Math.min(imgs.length - 1, ctl.index + d)); if (n === ctl.index) return; ctl.index = n; paint(); presBar(); };
+    paint(); const iv = setInterval(paint, 400);
+    startPresenting(c.captureStream(10), () => { clearInterval(iv); urls.forEach(u => URL.revokeObjectURL(u)); }, ctl);
+    if (imgs.length > 1) toast('Swipe or use the arrows to change slides', 'images');
+  };
+  $('#pr-video').onclick = () => $('#pr-vfile').click();
+  $('#pr-vfile').onchange = e => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
     $('#modal-present').hidden = true;
-    const img = new Image(); const url = URL.createObjectURL(f);
-    img.onload = () => {
-      const c = document.createElement('canvas'); c.width = 1920; c.height = 1080;
-      const g = c.getContext('2d');
-      const paint = () => {
-        g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height);
-        const sc = Math.min(c.width / img.width, c.height / img.height);
-        const w = img.width * sc, h = img.height * sc;
-        g.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+    const url = URL.createObjectURL(f);
+    const v = document.createElement('video');
+    v.playsInline = true; v.setAttribute('playsinline', ''); v.preload = 'auto'; v.src = url;
+    v.style.cssText = 'position:fixed;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+    document.body.appendChild(v);
+    let ac = null, stopped = false, timer = null;
+    v.onerror = () => { v.remove(); URL.revokeObjectURL(url); toast('That video format isn\'t supported here. Try an MP4.', 'film'); };
+    v.onloadedmetadata = async () => {
+      const { c, g } = presentCanvas();
+      const out = c.captureStream(30);
+      try { // send the video's sound too, while still letting the presenter hear it
+        ac = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ac.createMediaElementSource(v), dst = ac.createMediaStreamDestination();
+        src.connect(dst); src.connect(ac.destination);
+        dst.stream.getAudioTracks().forEach(t => out.addTrack(t));
+        await ac.resume();
+      } catch {}
+      const draw = () => {
+        if (stopped) return;
+        fit(g, v, v.videoWidth, v.videoHeight);
+        if (v.duration) $('#pb-seek').value = Math.round(v.currentTime / v.duration * 1000);
+        timer = setTimeout(draw, 33);
       };
-      paint(); const iv = setInterval(paint, 500);
-      const s = c.captureStream(5);
-      startPresenting(s, () => { clearInterval(iv); URL.revokeObjectURL(url); });
+      const ctl = {
+        kind: 'video', paused: () => v.paused,
+        toggle: () => { v.paused ? v.play() : v.pause(); },
+        seek: p => { if (v.duration) v.currentTime = p * v.duration; }
+      };
+      v.onplay = presBar; v.onpause = presBar; v.onended = presBar;
+      try { await v.play(); } catch { v.muted = true; try { await v.play(); } catch {} }
+      draw();
+      startPresenting(out, () => { stopped = true; clearTimeout(timer); v.pause(); v.remove(); URL.revokeObjectURL(url); try { ac?.close(); } catch {} }, ctl);
     };
-    img.onerror = () => toast('That image couldn\'t be opened', 'image-off');
-    img.src = url;
   };
   function shareScreenTo(id) {
     const p = S.peers.get(id); if (!p || !S.screenStream) return;
@@ -1123,7 +1229,7 @@
   function stopScreen() {
     if (!S.screenStream) return;
     S.screenStream.getTracks().forEach(t => t.stop()); S.screenStream = null;
-    try { S.presentCleanup?.(); } catch {} S.presentCleanup = null;
+    try { S.presentCleanup?.(); } catch {} S.presentCleanup = null; S.presentCtl = null; presBar();
     S.peers.forEach(p => { try { p.outScreen?.close(); } catch {} p.outScreen = null; });
     broadcast({ t: 'screen-stop' }); broadcast(myInfo());
     $('[data-key="me-screen"]')?.remove();
@@ -1352,7 +1458,7 @@
   });
 
   /* ---------- boot ---------- */
-  if (!canCaptureScreen() || inApp) { $('#ctl-screen').title = 'Present'; $('#ctl-screen').setAttribute('aria-label', 'Present'); }
+  if (!canCaptureScreen() || inApp || isMobile) { $('#ctl-screen').title = 'Present'; $('#ctl-screen').setAttribute('aria-label', 'Present'); }
   icons();
   const initCode = parseCode(location.hash);
   if (initCode) enterLobby(initCode); else show('home');
